@@ -15,13 +15,16 @@
     "min_no_price": 0.97,
     "max_spread": 0.03,
     "min_liquidity_usd": 500,
-    "max_time_to_resolution_hours": 720
+    "max_time_to_resolution_hours": 720,
+    "capture_min_no_ask": 0.45,
+    "capture_max_no_ask": 0.6
   },
   "fees": {
     "fee_bps": 0,
     "p_tail": 0.02,
     "tail_loss_fraction": 0.5,
-    "ambiguous_resolution_p_tail_multiplier": 1.5
+    "ambiguous_resolution_p_tail_multiplier": 1.5,
+    "ev_mode": "capture"
   },
   "simulation": {
     "default_order_size_usd": 100,
