@@ -55,6 +55,8 @@ import {
   clearQueue,
   queueLength,
 } from "./ops/plan_queue";
+import { createControlApi } from "./ops/control_api";
+import type { ConfirmResult } from "./ops/control_api";
 
 const TZ_OSLO = "Europe/Oslo";
 
@@ -427,6 +429,79 @@ function main(): void {
     const s = String(x).trim().replace(/[^0-9]/g, "");
     return s.length >= 10 ? s : null;
   }
+
+  async function executePlan(planId: string): Promise<ConfirmResult> {
+    const plan = getPlan(planId);
+    if (!plan) return null;
+    if (isPlanExecuted(planId)) return { executed: false, reason: "already executed" };
+    const proposal: TradeProposal = {
+      marketId: plan.market_id,
+      conditionId: plan.condition_id,
+      noTokenId: plan.no_token_id,
+      side: "NO",
+      sizeUsd: plan.sizeUsd,
+      bestAsk: plan.limit_price,
+      category: plan.category,
+      assumptionGroup: plan.assumption_key,
+      resolutionWindowBucket: plan.window_key,
+      assumptionKey: plan.assumption_key,
+      windowKey: plan.window_key,
+    };
+    const depth = getDepth(plan.no_token_id);
+    const fill = simulateFill(proposal, depth, config.simulation);
+    if (!fill.filled) return { executed: false, reason: `no_fill: ${fill.reason}` };
+    const riskState = buildRiskStateFromPositions(listPositions(dataDir, true));
+    const riskProposal: TradeProposalForRisk = {
+      marketId: plan.market_id,
+      conditionId: plan.condition_id,
+      sizeUsd: fill.fillSizeUsd,
+      category: plan.category,
+      assumptionGroup: plan.assumption_key,
+      resolutionWindowBucket: plan.window_key,
+      assumptionKey: plan.assumption_key,
+      windowKey: plan.window_key,
+    };
+    const allow = allowTrade(riskProposal, riskState, config);
+    if (allow.decision === "BLOCK") return { executed: false, reason: "blocked" };
+    const sizeToOpen =
+      allow.decision === "ALLOW_REDUCED_SIZE" && allow.suggested_size != null
+        ? allow.suggested_size
+        : fill.fillSizeUsd;
+    const effectiveFill =
+      sizeToOpen < fill.fillSizeUsd
+        ? {
+            ...fill,
+            fillSizeUsd: sizeToOpen,
+            fillSizeShares: sizeToOpen / fill.entryPriceVwap,
+          }
+        : fill;
+    const position = openPaperPosition(proposal, effectiveFill, randomUUID());
+    insertPosition(dataDir, position);
+    const executedAt = new Date().toISOString();
+    markPlanExecuted(planId, executedAt);
+    appendLedger(dataDir, {
+      timestamp: executedAt,
+      action: "trade_opened",
+      marketId: plan.market_id,
+      metadata: {
+        positionId: position.id,
+        sizeUsd: position.sizeUsd,
+        plan_id: planId,
+        assumptionKey: plan.assumption_key,
+        windowKey: plan.window_key,
+      },
+    });
+    appendLedger(dataDir, {
+      timestamp: executedAt,
+      action: "plan_executed",
+      marketId: plan.market_id,
+      metadata: { plan_id: planId, positionId: position.id, sizeUsd: position.sizeUsd },
+    });
+    console.log(`[ops] CONFIRM executed plan ${planId} -> position ${position.id}`);
+    return { executed: true, positionId: position.id };
+  }
+
+  createControlApi(config.control_api.port, { confirmHandler: executePlan });
 
   (async () => {
     await runScan().catch((e) => console.error("[startup]", e));
