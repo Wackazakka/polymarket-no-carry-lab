@@ -1,0 +1,96 @@
+import { readFileSync, existsSync } from "fs";
+import { join } from "path";
+import { z } from "zod";
+
+const ResolutionWindowSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  max_hours: z.number().positive(),
+});
+
+const ConfigSchema = z.object({
+  api: z.object({
+    clobRestBaseUrl: z.string().url(),
+    clobWsBaseUrl: z.string(),
+    gammaBaseUrl: z.string().url(),
+  }),
+  scanner: z.object({
+    pollIntervalMs: z.number().int().positive(),
+    maxOrderbookSubscriptions: z.number().int().positive(),
+  }),
+  selection: z.object({
+    min_no_price: z.number().min(0).max(1),
+    max_spread: z.number().min(0).max(1),
+    min_liquidity_usd: z.number().min(0),
+    max_time_to_resolution_hours: z.number().positive(),
+  }),
+  fees: z.object({
+    fee_bps: z.number().min(0),
+    p_tail: z.number().min(0).max(1),
+    tail_loss_fraction: z.number().min(0).max(1),
+    ambiguous_resolution_p_tail_multiplier: z.number().min(1),
+  }),
+  simulation: z.object({
+    default_order_size_usd: z.number().positive(),
+    slippage_bps: z.number().min(0),
+    max_fill_depth_levels: z.number().int().positive(),
+  }),
+  risk: z.object({
+    max_total_exposure_usd: z.number().min(0),
+    max_exposure_per_market_usd: z.number().min(0),
+    max_positions_open: z.number().int().min(0),
+    max_daily_drawdown_usd: z.number().min(0),
+    kill_switch_enabled: z.boolean(),
+    max_exposure_per_category_usd: z.number().min(0),
+    max_exposure_per_assumption_usd: z.number().min(0),
+    max_exposure_per_resolution_window_usd: z.number().min(0),
+    resolution_windows: z.array(ResolutionWindowSchema).min(1),
+  }),
+  reporting: z.object({
+    report_dir: z.string(),
+    daily_report_hour_local: z.number().int().min(0).max(23),
+    report_interval_minutes: z.number().int().positive(),
+    print_top_n: z.number().int().min(0),
+  }),
+  db: z.object({
+    path: z.string(),
+  }),
+});
+
+export type Config = z.infer<typeof ConfigSchema>;
+export type ResolutionWindow = z.infer<typeof ResolutionWindowSchema>;
+
+function findConfigPath(): string {
+  const cwd = process.cwd();
+  const candidates = [
+    join(cwd, "config.json"),
+    join(cwd, "src", "config", "config.json"),
+    join(cwd, "src", "config", "config.example.json"),
+    join(__dirname, "config.json"),
+    join(__dirname, "config.example.json"),
+  ];
+  for (const p of candidates) {
+    if (existsSync(p)) return p;
+  }
+  throw new Error(
+    `Config file not found. Copy src/config/config.example.json to config.json (in project root or src/config). Tried: ${candidates.join(", ")}`
+  );
+}
+
+export function loadConfig(): Config {
+  const configPath = findConfigPath();
+  const raw = readFileSync(configPath, "utf-8");
+  let data: unknown;
+  try {
+    data = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`Invalid JSON in config at ${configPath}: ${String(e)}`);
+  }
+  const result = ConfigSchema.safeParse(data);
+  if (!result.success) {
+    const issues = result.error.issues;
+    const msg = issues.map((e) => `${e.path.join(".")}: ${e.message}`).join("; ");
+    throw new Error(`Config validation failed: ${msg}`);
+  }
+  return result.data;
+}

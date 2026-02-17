@@ -1,0 +1,53 @@
+{
+  "api": {
+    "clobRestBaseUrl": "https://clob.polymarket.com",
+    "clobWsBaseUrl": "wss://ws-subscriptions-clob.polymarket.com/ws/",
+    "gammaBaseUrl": "https://gamma-api.polymarket.com"
+  },
+  "scanner": {
+    "pollIntervalMs": 60000,
+    "maxOrderbookSubscriptions": 50
+  },
+  "selection": {
+    "min_no_price": 0.97,
+    "max_spread": 0.03,
+    "min_liquidity_usd": 500,
+    "max_time_to_resolution_hours": 720
+  },
+  "fees": {
+    "fee_bps": 0,
+    "p_tail": 0.02,
+    "tail_loss_fraction": 0.5,
+    "ambiguous_resolution_p_tail_multiplier": 1.5
+  },
+  "simulation": {
+    "default_order_size_usd": 100,
+    "slippage_bps": 5,
+    "max_fill_depth_levels": 5
+  },
+  "risk": {
+    "max_total_exposure_usd": 10000,
+    "max_exposure_per_market_usd": 2000,
+    "max_positions_open": 20,
+    "max_daily_drawdown_usd": 2000,
+    "kill_switch_enabled": false,
+    "max_exposure_per_category_usd": 3000,
+    "max_exposure_per_assumption_usd": 2500,
+    "max_exposure_per_resolution_window_usd": 4000,
+    "resolution_windows": [
+      { "id": "same_day", "label": "Same day", "max_hours": 24 },
+      { "id": "48h", "label": "48h", "max_hours": 48 },
+      { "id": "1w", "label": "1 week", "max_hours": 168 },
+      { "id": "beyond", "label": "Beyond 1w", "max_hours": 999999 }
+    ]
+  },
+  "reporting": {
+    "report_dir": "./reports",
+    "daily_report_hour_local": 8,
+    "report_interval_minutes": 60,
+    "print_top_n": 10
+  },
+  "db": {
+    "path": "./data/polymarket_lab.db"
+  }
+}
