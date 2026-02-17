@@ -264,31 +264,44 @@ function main(): void {
         resolutionWindowBucket,
       };
       const allow = allowTrade(riskProposal, riskState, config);
-      if (!allow.allow) {
+      if (allow.decision === "BLOCK") {
         tradesBlockedByRisk++;
-        for (const b of allow.blocks) {
+        for (const b of allow.reasons) {
           blockReasonsCount[b] = (blockReasonsCount[b] ?? 0) + 1;
         }
         appendLedger(dataDir, {
           timestamp: new Date().toISOString(),
           action: "trade_blocked",
           marketId: market.marketId,
-          metadata: { blocks: allow.blocks, proposal: riskProposal },
+          metadata: { blocks: allow.reasons, proposal: riskProposal },
         });
-        console.log(`[risk] BLOCKED ${market.marketId}: ${allow.blocks.join("; ")}`);
+        console.log(`[risk] BLOCKED ${market.marketId}: ${allow.reasons.join("; ")}`);
         continue;
       }
 
-      const position = openPaperPosition(proposal, fill, randomUUID());
+      const sizeToOpen =
+        allow.decision === "ALLOW_REDUCED_SIZE" && allow.suggested_size != null
+          ? allow.suggested_size
+          : fill.fillSizeUsd;
+      const effectiveFill =
+        sizeToOpen < fill.fillSizeUsd
+          ? {
+              ...fill,
+              fillSizeUsd: sizeToOpen,
+              fillSizeShares: sizeToOpen / fill.entryPriceVwap,
+            }
+          : fill;
+
+      const position = openPaperPosition(proposal, effectiveFill, randomUUID());
       insertPosition(dataDir, position);
       riskState = buildRiskStateFromPositions(listPositions(dataDir, true));
       appendLedger(dataDir, {
         timestamp: new Date().toISOString(),
         action: "trade_opened",
         marketId: market.marketId,
-        metadata: { positionId: position.id, sizeUsd: fill.fillSizeUsd },
+        metadata: { positionId: position.id, sizeUsd: position.sizeUsd },
       });
-      console.log(`[paper] OPENED ${market.marketId} size=${fill.fillSizeUsd.toFixed(2)} USD`);
+      console.log(`[paper] OPENED ${market.marketId} size=${position.sizeUsd.toFixed(2)} USD`);
       topCandidatesByNetEv.push({
         marketId: market.marketId,
         question: market.question,
