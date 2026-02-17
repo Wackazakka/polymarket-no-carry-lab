@@ -36,6 +36,7 @@ const ConfigSchema = z.object({
     p_tail: z.number().min(0).max(1),
     tail_loss_fraction: z.number().min(0).max(1),
     ambiguous_resolution_p_tail_multiplier: z.number().min(1),
+    ev_mode: z.enum(["baseline", "capture"]).optional().default("baseline"),
   }),
   simulation: z.object({
     default_order_size_usd: z.number().positive(),

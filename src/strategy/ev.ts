@@ -5,6 +5,7 @@ export interface EVConfig {
   p_tail: number;
   tail_loss_fraction: number;
   ambiguous_resolution_p_tail_multiplier: number;
+  ev_mode?: "baseline" | "capture";
 }
 
 /**
@@ -39,16 +40,26 @@ export function computeEV(
   assumptions.fees_bps = config.fee_bps;
   explanation.push(`Fees: ${config.fee_bps} bps on ${sizeUsd} USD = ${feesEstimate.toFixed(4)} USD`);
 
-  let pTail = config.p_tail;
-  if (filterResult.flags.includes("RESOLUTION_AMBIGUOUS")) {
-    pTail *= config.ambiguous_resolution_p_tail_multiplier;
-    assumptions.p_tail_effective = pTail;
-    explanation.push(`Tail probability increased for ambiguous resolution: ${pTail.toFixed(4)}`);
+  let tailRiskCost: number;
+  const evMode = config.ev_mode ?? "baseline";
+  if (evMode === "capture") {
+    tailRiskCost = 0;
+    assumptions.tailByp = "Y";
+    assumptions.tail_bypass_reason = "capture_mode";
+    assumptions.tail_risk_cost = 0;
+    explanation.push("Tail bypass: ev_mode=capture => tailRiskCost=0");
+  } else {
+    let pTail = config.p_tail;
+    if (filterResult.flags.includes("RESOLUTION_AMBIGUOUS")) {
+      pTail *= config.ambiguous_resolution_p_tail_multiplier;
+      assumptions.p_tail_effective = pTail;
+      explanation.push(`Tail probability increased for ambiguous resolution: ${pTail.toFixed(4)}`);
+    }
+    const positionValue = shares * 1;
+    tailRiskCost = pTail * config.tail_loss_fraction * positionValue;
+    assumptions.tail_risk_cost = tailRiskCost;
+    explanation.push(`Tail risk: p_tail=${pTail}, loss fraction=${config.tail_loss_fraction} => ${tailRiskCost.toFixed(4)} USD`);
   }
-  const positionValue = shares * 1;
-  const tailRiskCost = pTail * config.tail_loss_fraction * positionValue;
-  assumptions.tail_risk_cost = tailRiskCost;
-  explanation.push(`Tail risk: p_tail=${pTail}, loss fraction=${config.tail_loss_fraction} => ${tailRiskCost.toFixed(4)} USD`);
 
   const netEv = grossEv - feesEstimate - tailRiskCost;
   assumptions.net_ev = netEv;
@@ -60,5 +71,6 @@ export function computeEV(
     net_ev: netEv,
     assumptions,
     explanation,
+    ...(evMode === "capture" && { tailByp: "Y", tail_bypass_reason: "capture_mode" }),
   };
 }

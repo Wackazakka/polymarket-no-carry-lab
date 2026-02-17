@@ -14,7 +14,15 @@ export interface ReportInput {
   blockReasons: Record<string, number>;
   positions: PaperPosition[];
   riskState: RiskState;
-  topCandidatesByNetEv: Array<{ marketId: string; question?: string; net_ev: number; reason?: string }>;
+  topCandidatesByNetEv: Array<{
+    marketId: string;
+    question?: string;
+    net_ev: number;
+    reason?: string;
+    tail_risk_cost?: number;
+    tailByp?: string;
+    tail_bypass_reason?: string;
+  }>;
   worstCandidates: Array<{ marketId: string; question?: string; net_ev?: number; reason?: string }>;
 }
 
@@ -98,9 +106,14 @@ export function generateReport(state: ReportInput, config: Config): ReportResult
   lines.push("");
 
   const n = config.reporting.print_top_n;
-  lines.push(formatSection(`Top ${n} candidates by net EV`, state.topCandidatesByNetEv.slice(0, n).map((c) =>
-    `  - ${c.marketId} | net_ev=${c.net_ev?.toFixed(4) ?? "?"} | ${c.question ?? ""}`
-  )).trim());
+  const topCandidates = state.topCandidatesByNetEv.slice(0, n);
+  const anyTailBypass = topCandidates.some((c) => c.tailByp === "Y");
+  lines.push(formatSection(`Top ${n} candidates by net EV`, [
+    ...topCandidates.map((c) =>
+      `  - ${c.marketId} | net_ev=${c.net_ev?.toFixed(4) ?? "?"} | tail_cost=${c.tail_risk_cost?.toFixed(4) ?? "?"} | tailByp=${c.tailByp ?? "N"}${c.tail_bypass_reason ? ` (${c.tail_bypass_reason})` : ""} | ${c.question ?? ""}`
+    ),
+    ...(anyTailBypass ? ["  (Tail bypass applied for capture_mode candidates.)"] : []),
+  ]).trim());
 
   lines.push(formatSection(`Top ${n} worst / ambiguous / high spread`, state.worstCandidates.slice(0, n).map((c) =>
     `  - ${c.marketId} | ${c.reason ?? ""} | ${c.question ?? ""}`

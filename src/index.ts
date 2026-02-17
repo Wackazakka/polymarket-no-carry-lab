@@ -223,6 +223,12 @@ function main(): void {
           net_ev: evResult.net_ev,
           reason: "negative_ev",
         });
+        appendLedger(dataDir, {
+          timestamp: new Date().toISOString(),
+          action: "scan_pass",
+          marketId: market.marketId,
+          metadata: { ev_negative: true, net_ev: evResult.net_ev, tail_risk_cost: evResult.tail_risk_cost, tailByp: evResult.tailByp, tail_bypass_reason: evResult.tail_bypass_reason },
+        });
         continue;
       }
 
@@ -299,13 +305,22 @@ function main(): void {
         timestamp: new Date().toISOString(),
         action: "trade_opened",
         marketId: market.marketId,
-        metadata: { positionId: position.id, sizeUsd: position.sizeUsd },
+        metadata: {
+          positionId: position.id,
+          sizeUsd: position.sizeUsd,
+          tail_risk_cost: evResult.tail_risk_cost,
+          tailByp: evResult.tailByp,
+          tail_bypass_reason: evResult.tail_bypass_reason,
+        },
       });
       console.log(`[paper] OPENED ${market.marketId} size=${position.sizeUsd.toFixed(2)} USD`);
       topCandidatesByNetEv.push({
         marketId: market.marketId,
         question: market.question,
         net_ev: evResult.net_ev,
+        tail_risk_cost: evResult.tail_risk_cost,
+        tailByp: evResult.tailByp,
+        tail_bypass_reason: evResult.tail_bypass_reason,
       });
     }
 

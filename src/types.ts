@@ -46,6 +46,10 @@ export interface EVResult {
   net_ev: number;
   assumptions: Record<string, unknown>;
   explanation: string[];
+  /** "Y" when tail was bypassed (e.g. capture mode). */
+  tailByp?: string;
+  /** Reason for bypass, e.g. "capture_mode". */
+  tail_bypass_reason?: string;
 }
 
 export interface PaperPosition {
