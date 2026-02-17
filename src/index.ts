@@ -5,20 +5,24 @@
 
 import { loadConfig } from "./config/load_config";
 import { enforceNoLiveTrading } from "./safety/ban_live_trading";
-import { fetchActiveMarkets } from "./markets/fetch_markets";
+import { fetchActiveMarkets } from "./market_fetcher";
 import {
   getTopOfBook,
   getDepth,
   startOrderbookStream,
   fetchOrderbookSnapshot,
 } from "./markets/orderbook_ws";
-import { evaluateMarketCandidate, evaluateMarketCandidateWithDetails, type FailedCheck } from "./strategy/filters";
-import { computeEV } from "./strategy/ev";
+import {
+  evaluateMarketCandidate,
+  evaluateMarketCandidateWithDetails,
+  computeEV,
+  type FailedCheck,
+} from "./opportunity_detector";
 import {
   simulateFill,
   openPaperPosition,
   type TradeProposal,
-} from "./strategy/paper_executor";
+} from "./execution";
 import { computeAssumptionKey, computeWindowKey } from "./assumption/keys";
 import {
   allowTrade,
@@ -31,7 +35,7 @@ import {
 import { initStore } from "./state/store";
 import { initPositionsDb, listPositions, insertPosition } from "./state/positions";
 import { initLedgerDb, appendLedger } from "./state/ledger";
-import { generateReport, writeReportToFile, type ReportInput } from "./report/daily_report";
+import { generateReport, writeReportToFile, type ReportInput } from "./audit";
 import type { NormalizedMarket } from "./types";
 import { randomUUID } from "crypto";
 

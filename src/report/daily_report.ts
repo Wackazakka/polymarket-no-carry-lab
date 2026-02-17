@@ -4,7 +4,7 @@ import type { Config } from "../config/load_config";
 import type { PaperPosition } from "../types";
 import type { RiskState, HeadroomSnapshot } from "../risk/risk_engine";
 import { worstCaseIfAssumptionFails } from "../risk/risk_engine";
-import { getExpectedPnl } from "../strategy/paper_executor";
+import { getExpectedPnl } from "../execution";
 
 export interface ReportInput {
   candidatesScanned: number;
