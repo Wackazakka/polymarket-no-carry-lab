@@ -45,6 +45,13 @@ export function isConfirmMode(): boolean {
   return !state.panic && state.mode === "ARMED_CONFIRM";
 }
 
+/** Reason confirm execution is not allowed, or null if allowed. */
+export function getConfirmGateRejection(): "panic" | "mode" | null {
+  if (state.panic) return "panic";
+  if (state.mode !== "ARMED_CONFIRM") return "mode";
+  return null;
+}
+
 export function setMode(newMode: ExecutionMode): void {
   const previous = { ...state };
   state.mode = newMode;

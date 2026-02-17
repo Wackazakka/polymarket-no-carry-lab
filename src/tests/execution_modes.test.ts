@@ -13,6 +13,7 @@ import {
   setMode,
   setPanic,
   panicStop,
+  getConfirmGateRejection,
   resetModeStateForTesting,
 } from "../ops/mode_manager";
 import {
@@ -157,6 +158,20 @@ describe("execution modes and panic", () => {
     it("getPlan returns undefined for missing plan_id", () => {
       assert.strictEqual(getPlan("nonexistent"), undefined);
       assert.strictEqual(isPlanExecuted("nonexistent"), false);
+    });
+  });
+
+  describe("confirm execution gates", () => {
+    it("confirm while panic => must not execute", () => {
+      setMode("ARMED_CONFIRM");
+      setPanic(true);
+      assert.strictEqual(getConfirmGateRejection(), "panic");
+    });
+
+    it("confirm while DISARMED => must not execute", () => {
+      setPanic(false);
+      setMode("DISARMED");
+      assert.strictEqual(getConfirmGateRejection(), "mode");
     });
   });
 

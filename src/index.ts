@@ -46,6 +46,7 @@ import {
   setModeChangeCallback,
   panicStop,
   getModeState,
+  getConfirmGateRejection,
 } from "./ops/mode_manager";
 import {
   enqueuePlan,
@@ -434,6 +435,8 @@ function main(): void {
     const plan = getPlan(planId);
     if (!plan) return null;
     if (isPlanExecuted(planId)) return { executed: false, reason: "already executed" };
+    const gate = getConfirmGateRejection();
+    if (gate) return { executed: false, reason: gate };
     const proposal: TradeProposal = {
       marketId: plan.market_id,
       conditionId: plan.condition_id,
