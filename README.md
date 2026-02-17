@@ -72,6 +72,22 @@ Reports are written to `report_dir` (default `./reports/`) as timestamped `.txt`
 
 ---
 
+## Control API
+
+The app exposes a small HTTP API (port in `config.control_api.port`, default 3344) for status, last-scan plans, and execution mode (disarm/arm/panic). See **[docs/API.md](docs/API.md)** for GET /plans query params, response shape, and error format.
+
+**Post-deploy smoke test** (run with app already up):
+
+```bash
+bash scripts/smoke-plans.sh
+```
+
+Or make it executable once: `chmod +x scripts/smoke-plans.sh` then `./scripts/smoke-plans.sh`. Override base URL with `BASE_URL=http://your-host:3344`.
+
+Quick check: `curl -s http://localhost:3344/plans | jq '.count_total, .count_returned, .limit, .offset'`.
+
+---
+
 ## Project structure
 
 ```
@@ -84,6 +100,10 @@ src/
   state/          positions.ts, ledger.ts, db.ts
   report/         daily_report.ts
   index.ts        main runner
+docs/
+  API.md          Control API (GET /plans, etc.)
+scripts/
+  smoke-plans.sh  Post-deploy smoke test for /plans
 ```
 
 ---
