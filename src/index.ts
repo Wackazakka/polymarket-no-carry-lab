@@ -331,6 +331,10 @@ function main(): void {
         tail_risk_cost: evResult.tail_risk_cost,
         tailByp: evResult.tailByp,
         tail_bypass_reason: evResult.tail_bypass_reason,
+        category,
+        window_key: windowKey,
+        assumption_key: assumptionKey,
+        headroom: allow.headroom,
       });
     }
 

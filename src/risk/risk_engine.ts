@@ -31,6 +31,15 @@ export interface TradeProposalForRisk {
 
 export type RiskDecision = "ALLOW" | "BLOCK" | "ALLOW_REDUCED_SIZE";
 
+/** Headroom (USD) per dimension from the same risk state used for the decision. */
+export interface HeadroomSnapshot {
+  global: number;
+  category: number;
+  assumption: number;
+  window: number;
+  per_market: number;
+}
+
 export interface AllowTradeResult {
   /** @deprecated use decision instead */
   allow: boolean;
@@ -40,6 +49,8 @@ export interface AllowTradeResult {
   reasons: string[];
   /** When decision === ALLOW_REDUCED_SIZE, max size that fits under all caps. */
   suggested_size?: number;
+  /** Headroom per dimension (same state as decision). */
+  headroom: HeadroomSnapshot;
 }
 
 function getResolutionWindowBucket(
@@ -140,6 +151,27 @@ export function allowTrade(
   const reasons: string[] = [];
   const risk = config.risk;
 
+  const cat = proposal.category ?? "uncategorized";
+  const ag = proposal.assumptionKey ?? proposal.assumptionGroup ?? "other";
+  const rw = proposal.windowKey ?? proposal.resolutionWindowBucket ?? "unknown";
+  const currentMarket = currentState.exposureByMarket[proposal.marketId] ?? 0;
+  const currentCat = currentState.exposuresByCategory[cat] ?? 0;
+  const currentAg = currentState.exposuresByAssumption[ag] ?? 0;
+  const currentRw = currentState.exposuresByResolutionWindow[rw] ?? 0;
+
+  const headroomGlobal = Math.max(0, risk.max_total_exposure_usd - currentState.totalExposureUsd);
+  const headroomMarket = Math.max(0, risk.max_exposure_per_market_usd - currentMarket);
+  const headroomCategory = Math.max(0, risk.max_exposure_per_category_usd - currentCat);
+  const headroomAssumption = Math.max(0, risk.max_exposure_per_assumption_usd - currentAg);
+  const headroomWindow = Math.max(0, risk.max_exposure_per_resolution_window_usd - currentRw);
+  const headroom: HeadroomSnapshot = {
+    global: headroomGlobal,
+    category: headroomCategory,
+    assumption: headroomAssumption,
+    window: headroomWindow,
+    per_market: headroomMarket,
+  };
+
   if (risk.kill_switch_enabled) {
     reasons.push("kill_switch_enabled");
     return {
@@ -147,6 +179,7 @@ export function allowTrade(
       blocks: reasons,
       decision: "BLOCK",
       reasons,
+      headroom,
     };
   }
 
@@ -158,23 +191,9 @@ export function allowTrade(
       blocks: reasons,
       decision: "BLOCK",
       reasons,
+      headroom,
     };
   }
-
-  const cat = proposal.category ?? "uncategorized";
-  const ag = proposal.assumptionKey ?? proposal.assumptionGroup ?? "other";
-  const rw = proposal.windowKey ?? proposal.resolutionWindowBucket ?? "unknown";
-  const currentMarket = currentState.exposureByMarket[proposal.marketId] ?? 0;
-  const currentCat = currentState.exposuresByCategory[cat] ?? 0;
-  const currentAg = currentState.exposuresByAssumption[ag] ?? 0;
-  const currentRw = currentState.exposuresByResolutionWindow[rw] ?? 0;
-
-  // Headroom per dimension (max additional size that fits under each cap)
-  const headroomGlobal = Math.max(0, risk.max_total_exposure_usd - currentState.totalExposureUsd);
-  const headroomMarket = Math.max(0, risk.max_exposure_per_market_usd - currentMarket);
-  const headroomCategory = Math.max(0, risk.max_exposure_per_category_usd - currentCat);
-  const headroomAssumption = Math.max(0, risk.max_exposure_per_assumption_usd - currentAg);
-  const headroomWindow = Math.max(0, risk.max_exposure_per_resolution_window_usd - currentRw);
 
   const requested = proposal.sizeUsd;
   const suggested_size = Math.min(
@@ -208,6 +227,7 @@ export function allowTrade(
       blocks: [],
       decision: "ALLOW",
       reasons: [],
+      headroom,
     };
   }
   if (suggested_size > 0) {
@@ -217,6 +237,7 @@ export function allowTrade(
       decision: "ALLOW_REDUCED_SIZE",
       reasons,
       suggested_size,
+      headroom,
     };
   }
   return {
@@ -224,6 +245,7 @@ export function allowTrade(
     blocks: reasons,
     decision: "BLOCK",
     reasons,
+    headroom,
   };
 }
 

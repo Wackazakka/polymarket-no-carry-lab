@@ -161,6 +161,32 @@ describe("allowTrade correlated caps", () => {
     assert.ok(result.reasons.some((r) => r.includes("category")));
   });
 
+  it("headroom is included and suggested_size equals limiting headroom for ALLOW_REDUCED_SIZE", () => {
+    const config = mockConfig({ max_exposure_per_category_usd: 1_000 });
+    const state = stateWithPositions([
+      { marketId: "m0", category: "Politics", assumptionGroup: "other", resolutionWindowBucket: "1w", sizeUsd: 800 },
+    ]);
+    const result = allowTrade(
+      proposal("m1", 500, "Politics", "other", "1w"),
+      state,
+      config
+    );
+    assert.strictEqual(result.decision, "ALLOW_REDUCED_SIZE");
+    assert.ok(result.headroom != null, "headroom must be present");
+    const hr = result.headroom!;
+    const limiting = Math.min(
+      hr.global,
+      hr.category,
+      hr.assumption,
+      hr.window,
+      hr.per_market,
+      500
+    );
+    assert.strictEqual(result.suggested_size, limiting, "suggested_size must equal limiting headroom (capped by requested)");
+    assert.strictEqual(hr.category, 200, "category headroom is 1000 - 800");
+    assert.strictEqual(result.suggested_size, 200);
+  });
+
   it("multiple trades accumulate and hit category cap", () => {
     const config = mockConfig({ max_exposure_per_category_usd: 1_500 });
     let state = emptyState();

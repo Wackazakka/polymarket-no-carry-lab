@@ -2,7 +2,7 @@ import { writeFileSync, mkdirSync, existsSync } from "fs";
 import { join } from "path";
 import type { Config } from "../config/load_config";
 import type { PaperPosition } from "../types";
-import type { RiskState } from "../risk/risk_engine";
+import type { RiskState, HeadroomSnapshot } from "../risk/risk_engine";
 import { worstCaseIfAssumptionFails } from "../risk/risk_engine";
 import { getExpectedPnl } from "../strategy/paper_executor";
 
@@ -22,6 +22,10 @@ export interface ReportInput {
     tail_risk_cost?: number;
     tailByp?: string;
     tail_bypass_reason?: string;
+    category?: string | null;
+    window_key?: string;
+    assumption_key?: string;
+    headroom?: HeadroomSnapshot;
   }>;
   worstCandidates: Array<{ marketId: string; question?: string; net_ev?: number; reason?: string }>;
 }
@@ -109,9 +113,15 @@ export function generateReport(state: ReportInput, config: Config): ReportResult
   const topCandidates = state.topCandidatesByNetEv.slice(0, n);
   const anyTailBypass = topCandidates.some((c) => c.tailByp === "Y");
   lines.push(formatSection(`Top ${n} candidates by net EV`, [
-    ...topCandidates.map((c) =>
-      `  - ${c.marketId} | net_ev=${c.net_ev?.toFixed(4) ?? "?"} | tail_cost=${c.tail_risk_cost?.toFixed(4) ?? "?"} | tailByp=${c.tailByp ?? "N"}${c.tail_bypass_reason ? ` (${c.tail_bypass_reason})` : ""} | ${c.question ?? ""}`
-    ),
+    ...topCandidates.map((c) => {
+      const cat = c.category ?? "—";
+      const wk = c.window_key ?? "—";
+      const ak = c.assumption_key != null ? c.assumption_key.slice(0, 10) + (c.assumption_key.length > 10 ? "…" : "") : "—";
+      const hr = c.headroom
+        ? `headroom: G=${c.headroom.global.toFixed(0)} C=${c.headroom.category.toFixed(0)} A=${c.headroom.assumption.toFixed(0)} W=${c.headroom.window.toFixed(0)} M=${c.headroom.per_market.toFixed(0)}`
+        : "";
+      return `  - ${c.marketId} | cat=${cat} | ${wk} | a1=${ak} | net_ev=${c.net_ev?.toFixed(4) ?? "?"} | tail_cost=${c.tail_risk_cost?.toFixed(4) ?? "?"} | tailByp=${c.tailByp ?? "N"}${c.tail_bypass_reason ? ` (${c.tail_bypass_reason})` : ""}${hr ? ` | ${hr}` : ""} | ${c.question ?? ""}`;
+    }),
     ...(anyTailBypass ? ["  (Tail bypass applied for capture_mode candidates.)"] : []),
   ]).trim());
 
