@@ -73,6 +73,33 @@ describe("execution modes and panic", () => {
       setPanic(false);
       assert.strictEqual(isPanic(), false);
     });
+
+    it("PANIC blocks execution and queue is cleared (panic stop)", () => {
+      setMode("ARMED_AUTO");
+      enqueuePlan({
+        plan_id: "p1",
+        created_at: new Date().toISOString(),
+        market_id: "m1",
+        condition_id: "c1",
+        no_token_id: "t1",
+        outcome: "NO",
+        sizeUsd: 100,
+        limit_price: 0.98,
+        category: null,
+        assumption_key: "a1_x",
+        window_key: "W1_3_7D",
+        ev_breakdown: { net_ev: 0 },
+        headroom: { global: 100, category: 100, assumption: 100, window: 100, per_market: 100 },
+        status: "queued",
+      });
+      assert.strictEqual(queueLength(), 1);
+      panicStop();
+      clearQueue();
+      assert.strictEqual(getMode(), "DISARMED");
+      assert.strictEqual(isPanic(), true);
+      assert.strictEqual(mayExecute(), false);
+      assert.strictEqual(queueLength(), 0);
+    });
   });
 
   describe("plan queue", () => {
