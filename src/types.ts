@@ -63,6 +63,10 @@ export interface PaperPosition {
   category: string | null;
   assumptionGroup: string | null;
   resolutionWindowBucket: string | null;
+  /** Deterministic assumption key (from assumption/keys). */
+  assumptionKey?: string | null;
+  /** Deterministic window key (from assumption/keys). */
+  windowKey?: string | null;
   openedAt: string;
   closedAt: string | null;
   expectedPnl: number | null;

@@ -12,6 +12,10 @@ export interface RiskState {
   exposureByMarket: Record<string, number>;
 }
 
+/**
+ * Proposal for risk check. sizeUsd = position notional (cost in USD to open).
+ * For binary NO positions, notional = max loss if NO loses; all caps use this same unit.
+ */
 export interface TradeProposalForRisk {
   marketId: string;
   conditionId: string;
@@ -19,6 +23,10 @@ export interface TradeProposalForRisk {
   category: string | null;
   assumptionGroup: string | null;
   resolutionWindowBucket: string | null;
+  /** Deterministic grouping key (from assumption/keys). Single source for caps. */
+  assumptionKey: string;
+  /** Deterministic window bucket (from assumption/keys). Single source for caps. */
+  windowKey: string;
 }
 
 export type RiskDecision = "ALLOW" | "BLOCK" | "ALLOW_REDUCED_SIZE";
@@ -83,6 +91,10 @@ export function computeResolutionWindowBucket(
   return getResolutionWindowBucket(resolutionTime, config.risk.resolution_windows);
 }
 
+/**
+ * Aggregate exposure from open positions. Unit: position notional USD (p.sizeUsd).
+ * For binary NO, notional = max loss USD. All caps (per_trade, category, assumption, time_window, global) use this unit.
+ */
 function buildRiskState(positions: PaperPosition[]): RiskState {
   const exposuresByCategory: Record<string, number> = {};
   const exposuresByAssumption: Record<string, number> = {};
@@ -95,9 +107,9 @@ function buildRiskState(positions: PaperPosition[]): RiskState {
     totalExposureUsd += p.sizeUsd;
     const cat = p.category ?? "uncategorized";
     exposuresByCategory[cat] = (exposuresByCategory[cat] ?? 0) + p.sizeUsd;
-    const ag = p.assumptionGroup ?? "other";
+    const ag = p.assumptionKey ?? p.assumptionGroup ?? "other";
     exposuresByAssumption[ag] = (exposuresByAssumption[ag] ?? 0) + p.sizeUsd;
-    const rw = p.resolutionWindowBucket ?? "unknown";
+    const rw = p.windowKey ?? p.resolutionWindowBucket ?? "unknown";
     exposuresByResolutionWindow[rw] = (exposuresByResolutionWindow[rw] ?? 0) + p.sizeUsd;
     exposureByMarket[p.marketId] = (exposureByMarket[p.marketId] ?? 0) + p.sizeUsd;
   }
@@ -150,8 +162,8 @@ export function allowTrade(
   }
 
   const cat = proposal.category ?? "uncategorized";
-  const ag = proposal.assumptionGroup ?? "other";
-  const rw = proposal.resolutionWindowBucket ?? "unknown";
+  const ag = proposal.assumptionKey ?? proposal.assumptionGroup ?? "other";
+  const rw = proposal.windowKey ?? proposal.resolutionWindowBucket ?? "unknown";
   const currentMarket = currentState.exposureByMarket[proposal.marketId] ?? 0;
   const currentCat = currentState.exposuresByCategory[cat] ?? 0;
   const currentAg = currentState.exposuresByAssumption[ag] ?? 0;

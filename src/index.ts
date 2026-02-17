@@ -19,6 +19,7 @@ import {
   openPaperPosition,
   type TradeProposal,
 } from "./strategy/paper_executor";
+import { computeAssumptionKey, computeWindowKey } from "./assumption/keys";
 import {
   allowTrade,
   buildRiskStateFromPositions,
@@ -235,6 +236,9 @@ function main(): void {
       const category = inferCategory(market);
       const assumptionGroup = inferAssumptionGroup(market);
       const resolutionWindowBucket = computeResolutionWindowBucket(market.resolutionTime, config);
+      const nowTs = Date.now();
+      const assumptionKey = computeAssumptionKey(market, config.fees.ev_mode, nowTs);
+      const windowKey = computeWindowKey(market, nowTs);
 
       const proposal: TradeProposal = {
         marketId: market.marketId,
@@ -246,6 +250,8 @@ function main(): void {
         category,
         assumptionGroup,
         resolutionWindowBucket,
+        assumptionKey,
+        windowKey,
       };
 
       const depth = getDepth(market.noTokenId);
@@ -268,6 +274,8 @@ function main(): void {
         category,
         assumptionGroup,
         resolutionWindowBucket,
+        assumptionKey,
+        windowKey,
       };
       const allow = allowTrade(riskProposal, riskState, config);
       if (allow.decision === "BLOCK") {
@@ -308,6 +316,8 @@ function main(): void {
         metadata: {
           positionId: position.id,
           sizeUsd: position.sizeUsd,
+          assumptionKey,
+          windowKey,
           tail_risk_cost: evResult.tail_risk_cost,
           tailByp: evResult.tailByp,
           tail_bypass_reason: evResult.tail_bypass_reason,

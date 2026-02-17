@@ -16,6 +16,8 @@ export interface TradeProposal {
   category: string | null;
   assumptionGroup: string | null;
   resolutionWindowBucket: string | null;
+  assumptionKey: string;
+  windowKey: string;
 }
 
 export interface FillResult {
@@ -100,6 +102,8 @@ export function openPaperPosition(
     category: proposal.category,
     assumptionGroup: proposal.assumptionGroup,
     resolutionWindowBucket: proposal.resolutionWindowBucket,
+    assumptionKey: proposal.assumptionKey ?? null,
+    windowKey: proposal.windowKey ?? null,
     openedAt: new Date().toISOString(),
     closedAt: null,
     expectedPnl,

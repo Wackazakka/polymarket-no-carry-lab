@@ -51,6 +51,8 @@ function stateWithPositions(positions: Array<{ marketId: string; category: strin
     category: p.category,
     assumptionGroup: p.assumptionGroup,
     resolutionWindowBucket: p.resolutionWindowBucket,
+    assumptionKey: p.assumptionGroup,
+    windowKey: p.resolutionWindowBucket,
     openedAt: new Date().toISOString(),
     closedAt: null,
     expectedPnl: null,
@@ -66,6 +68,8 @@ function proposal(marketId: string, sizeUsd: number, category: string, assumptio
     category,
     assumptionGroup,
     resolutionWindowBucket,
+    assumptionKey: assumptionGroup,
+    windowKey: resolutionWindowBucket,
   };
 }
 
@@ -194,5 +198,22 @@ describe("allowTrade correlated caps", () => {
     );
     assert.strictEqual(result.decision, "BLOCK");
     assert.ok(result.reasons.includes("kill_switch_enabled"));
+  });
+
+  it("caps use exposure_amount (notional USD), not shares or price", () => {
+    const config = mockConfig({ max_exposure_per_category_usd: 150 });
+    // Position 1: 100 USD notional at 0.98 (≈102 shares). Position 2 proposal: 100 USD notional at 0.50 (200 shares).
+    // If we mistakenly used shares or price, cap would be wrong. We use sizeUsd everywhere.
+    const state = stateWithPositions([
+      { marketId: "m1", category: "SameCat", assumptionGroup: "other", resolutionWindowBucket: "1w", sizeUsd: 100 },
+    ]);
+    const result = allowTrade(
+      proposal("m2", 100, "SameCat", "other", "1w"),
+      state,
+      config
+    );
+    assert.strictEqual(result.decision, "ALLOW_REDUCED_SIZE");
+    assert.strictEqual(result.suggested_size, 50);
+    assert.ok(result.reasons.some((r) => r.includes("category")));
   });
 });
