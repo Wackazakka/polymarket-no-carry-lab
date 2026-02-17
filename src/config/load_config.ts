@@ -30,6 +30,8 @@ const ConfigSchema = z.object({
     max_spread: z.number().min(0).max(1),
     min_liquidity_usd: z.number().min(0),
     max_time_to_resolution_hours: z.number().positive(),
+    capture_min_no_ask: z.number().min(0).max(1).optional().default(0.45),
+    capture_max_no_ask: z.number().min(0).max(1).optional().default(0.6),
   }),
   fees: z.object({
     fee_bps: z.number().min(0),

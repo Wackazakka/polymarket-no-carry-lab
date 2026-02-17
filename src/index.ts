@@ -168,21 +168,32 @@ function main(): void {
     const now = new Date();
     const selection = config.selection;
     const diagnosticLoose = Boolean(config.diagnostic_loose_filters);
+    const evMode = config.fees.ev_mode ?? "baseline";
     const filterConfig = diagnosticLoose
       ? {
           min_no_price: 0.8,
           max_spread: 0.05,
           min_liquidity_usd: 100,
           max_time_to_resolution_hours: selection.max_time_to_resolution_hours * 1.5,
+          ev_mode: evMode,
+          capture_min_no_ask: selection.capture_min_no_ask,
+          capture_max_no_ask: selection.capture_max_no_ask,
         }
       : {
           min_no_price: selection.min_no_price,
           max_spread: selection.max_spread,
           min_liquidity_usd: selection.min_liquidity_usd,
           max_time_to_resolution_hours: selection.max_time_to_resolution_hours,
+          ev_mode: evMode,
+          capture_min_no_ask: selection.capture_min_no_ask,
+          capture_max_no_ask: selection.capture_max_no_ask,
         };
+    const noAskDesc = evMode === "capture"
+      ? `capture band [${filterConfig.capture_min_no_ask}, ${filterConfig.capture_max_no_ask}]`
+      : `min_no_price=${filterConfig.min_no_price}`;
+    console.log("[scan] ev_mode=" + evMode + " NO-ask threshold: " + noAskDesc);
     if (diagnosticLoose) {
-      console.log("[diagnostic] Using loose filter thresholds: min_no_price=0.8 max_spread=0.05 min_liquidity_usd=100 max_time_to_resolution_hours=" + filterConfig.max_time_to_resolution_hours);
+      console.log("[diagnostic] Loose filters: " + noAskDesc + " max_spread=0.05 min_liquidity_usd=100 max_time_to_resolution_hours=" + filterConfig.max_time_to_resolution_hours);
     }
 
     const passed: Array<{ market: NormalizedMarket; book: ReturnType<typeof getTopOfBook>; filterResult: ReturnType<typeof evaluateMarketCandidate> }> = [];

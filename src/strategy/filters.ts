@@ -19,6 +19,10 @@ export interface FilterConfig {
   max_spread: number;
   min_liquidity_usd: number;
   max_time_to_resolution_hours: number;
+  /** When ev_mode === "capture": NO ask must be in [capture_min_no_ask, capture_max_no_ask]. */
+  ev_mode?: "baseline" | "capture";
+  capture_min_no_ask?: number;
+  capture_max_no_ask?: number;
 }
 
 /** One failed threshold check (for diagnostic near-miss reporting). */
@@ -72,9 +76,19 @@ export function evaluateMarketCandidate(
     reasons.push("no NO ask (missing orderbook)");
     return { pass: false, reasons, flags };
   }
-  if (entryPrice < config.min_no_price) {
-    reasons.push(`NO ask ${entryPrice} < min_no_price ${config.min_no_price}`);
-    return { pass: false, reasons, flags };
+  const isCapture = config.ev_mode === "capture";
+  if (isCapture) {
+    const minA = config.capture_min_no_ask ?? 0.45;
+    const maxA = config.capture_max_no_ask ?? 0.6;
+    if (entryPrice < minA || entryPrice > maxA) {
+      reasons.push(`NO ask ${entryPrice} outside capture band [${minA}, ${maxA}]`);
+      return { pass: false, reasons, flags };
+    }
+  } else {
+    if (entryPrice < config.min_no_price) {
+      reasons.push(`NO ask ${entryPrice} < min_no_price ${config.min_no_price}`);
+      return { pass: false, reasons, flags };
+    }
   }
 
   if (!book) {
@@ -143,11 +157,23 @@ export function evaluateMarketCandidateWithDetails(
     failedChecks.push({ check: "no_ask", value: 0, threshold: 0, message: "no NO ask (missing orderbook)" });
     return { pass: false, reasons, flags, failedChecks };
   }
-  if (entryPrice < config.min_no_price) {
-    const msg = `NO ask ${entryPrice} < min_no_price ${config.min_no_price}`;
-    reasons.push(msg);
-    failedChecks.push({ check: "min_no_price", value: entryPrice, threshold: config.min_no_price, message: msg });
-    return { pass: false, reasons, flags, failedChecks };
+  const isCapture = config.ev_mode === "capture";
+  if (isCapture) {
+    const minA = config.capture_min_no_ask ?? 0.45;
+    const maxA = config.capture_max_no_ask ?? 0.6;
+    if (entryPrice < minA || entryPrice > maxA) {
+      const msg = `NO ask ${entryPrice} outside capture band [${minA}, ${maxA}]`;
+      reasons.push(msg);
+      failedChecks.push({ check: "capture_no_ask_band", value: entryPrice, threshold: maxA, message: msg });
+      return { pass: false, reasons, flags, failedChecks };
+    }
+  } else {
+    if (entryPrice < config.min_no_price) {
+      const msg = `NO ask ${entryPrice} < min_no_price ${config.min_no_price}`;
+      reasons.push(msg);
+      failedChecks.push({ check: "min_no_price", value: entryPrice, threshold: config.min_no_price, message: msg });
+      return { pass: false, reasons, flags, failedChecks };
+    }
   }
 
   if (!book) {
