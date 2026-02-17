@@ -36,8 +36,25 @@ import { initStore } from "./state/store";
 import { initPositionsDb, listPositions, insertPosition } from "./state/positions";
 import { initLedgerDb, appendLedger } from "./state/ledger";
 import { generateReport, writeReportToFile, type ReportInput } from "./audit";
-import type { NormalizedMarket } from "./types";
+import type { NormalizedMarket, TradePlan } from "./types";
 import { randomUUID } from "crypto";
+import {
+  getMode,
+  isPanic,
+  isConfirmMode,
+  isAutoExecute,
+  setModeChangeCallback,
+  panicStop,
+  getModeState,
+} from "./ops/mode_manager";
+import {
+  enqueuePlan,
+  getPlan,
+  markPlanExecuted,
+  isPlanExecuted,
+  clearQueue,
+  queueLength,
+} from "./ops/plan_queue";
 
 const TZ_OSLO = "Europe/Oslo";
 
@@ -61,6 +78,15 @@ function main(): void {
   const dataDir = initStore(config);
   initPositionsDb(dataDir);
   initLedgerDb(dataDir);
+
+  setModeChangeCallback((state, previous) => {
+    appendLedger(dataDir, {
+      timestamp: new Date().toISOString(),
+      action: "mode_change",
+      marketId: "",
+      metadata: { mode: state.mode, panic: state.panic, previousMode: previous.mode, previousPanic: previous.panic },
+    });
+  });
 
   const reportIntervalMs = config.reporting.report_interval_minutes * 60 * 1000;
   let lastDailyReportHour: number | null = null;
@@ -310,36 +336,88 @@ function main(): void {
             }
           : fill;
 
-      const position = openPaperPosition(proposal, effectiveFill, randomUUID());
-      insertPosition(dataDir, position);
-      riskState = buildRiskStateFromPositions(listPositions(dataDir, true));
-      appendLedger(dataDir, {
-        timestamp: new Date().toISOString(),
-        action: "trade_opened",
-        marketId: market.marketId,
-        metadata: {
-          positionId: position.id,
-          sizeUsd: position.sizeUsd,
-          assumptionKey,
-          windowKey,
+      const planId = randomUUID();
+      const planPayload: Omit<TradePlan, "plan_id" | "created_at" | "status"> = {
+        market_id: market.marketId,
+        condition_id: market.conditionId,
+        no_token_id: market.noTokenId!,
+        outcome: "NO",
+        sizeUsd: sizeToOpen,
+        limit_price: entryPrice,
+        category,
+        assumption_key: assumptionKey,
+        window_key: windowKey,
+        ev_breakdown: {
+          net_ev: evResult.net_ev,
           tail_risk_cost: evResult.tail_risk_cost,
           tailByp: evResult.tailByp,
           tail_bypass_reason: evResult.tail_bypass_reason,
         },
-      });
-      console.log(`[paper] OPENED ${market.marketId} size=${position.sizeUsd.toFixed(2)} USD`);
-      topCandidatesByNetEv.push({
-        marketId: market.marketId,
-        question: market.question,
-        net_ev: evResult.net_ev,
-        tail_risk_cost: evResult.tail_risk_cost,
-        tailByp: evResult.tailByp,
-        tail_bypass_reason: evResult.tail_bypass_reason,
-        category,
-        window_key: windowKey,
-        assumption_key: assumptionKey,
         headroom: allow.headroom,
-      });
+      };
+
+      if (getMode() === "DISARMED" || isPanic()) {
+        console.log(`[ops] Skipping execution (mode=${getMode()}, panic=${isPanic()}) for ${market.marketId}`);
+        continue;
+      }
+
+      if (isConfirmMode()) {
+        const plan: TradePlan = {
+          ...planPayload,
+          plan_id: planId,
+          created_at: new Date().toISOString(),
+          status: "queued",
+        };
+        enqueuePlan(plan);
+        appendLedger(dataDir, {
+          timestamp: new Date().toISOString(),
+          action: "plan_created",
+          marketId: market.marketId,
+          metadata: { plan_id: planId, sizeUsd: sizeToOpen, assumption_key: assumptionKey, window_key: windowKey },
+        });
+        console.log(`[ops] Plan queued ${planId} for ${market.marketId} (ARMED_CONFIRM)`);
+        continue;
+      }
+
+      if (isAutoExecute()) {
+        const position = openPaperPosition(proposal, effectiveFill, randomUUID());
+        insertPosition(dataDir, position);
+        riskState = buildRiskStateFromPositions(listPositions(dataDir, true));
+        appendLedger(dataDir, {
+          timestamp: new Date().toISOString(),
+          action: "trade_opened",
+          marketId: market.marketId,
+          metadata: {
+            positionId: position.id,
+            sizeUsd: position.sizeUsd,
+            assumptionKey,
+            windowKey,
+            plan_id: planId,
+            tail_risk_cost: evResult.tail_risk_cost,
+            tailByp: evResult.tailByp,
+            tail_bypass_reason: evResult.tail_bypass_reason,
+          },
+        });
+        appendLedger(dataDir, {
+          timestamp: new Date().toISOString(),
+          action: "plan_executed",
+          marketId: market.marketId,
+          metadata: { plan_id: planId, positionId: position.id, sizeUsd: position.sizeUsd },
+        });
+        console.log(`[paper] OPENED ${market.marketId} size=${position.sizeUsd.toFixed(2)} USD (plan ${planId})`);
+        topCandidatesByNetEv.push({
+          marketId: market.marketId,
+          question: market.question,
+          net_ev: evResult.net_ev,
+          tail_risk_cost: evResult.tail_risk_cost,
+          tailByp: evResult.tailByp,
+          tail_bypass_reason: evResult.tail_bypass_reason,
+          category,
+          window_key: windowKey,
+          assumption_key: assumptionKey,
+          headroom: allow.headroom,
+        });
+      }
     }
 
     maybeReport();

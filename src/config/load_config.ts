@@ -63,6 +63,12 @@ const ConfigSchema = z.object({
   db: z.object({
     path: z.string(),
   }),
+  control_api: z
+    .object({
+      port: z.number().int().min(1).max(65535),
+    })
+    .optional()
+    .default({ port: 3344 }),
   diagnostic_loose_filters: z.boolean().optional().default(false),
 });
 

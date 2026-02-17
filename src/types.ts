@@ -72,10 +72,48 @@ export interface PaperPosition {
   expectedPnl: number | null;
 }
 
+export type ExecutionMode = "DISARMED" | "ARMED_CONFIRM" | "ARMED_AUTO";
+
+/** Headroom snapshot for a trade plan (same shape as risk HeadroomSnapshot). */
+export interface HeadroomSnapshot {
+  global: number;
+  category: number;
+  assumption: number;
+  window: number;
+  per_market: number;
+}
+
+/** Queued trade plan (idempotency key = plan_id). */
+export interface TradePlan {
+  plan_id: string;
+  created_at: string;
+  market_id: string;
+  condition_id: string;
+  no_token_id: string;
+  outcome: "NO";
+  sizeUsd: number;
+  limit_price: number;
+  category: string | null;
+  assumption_key: string;
+  window_key: string;
+  ev_breakdown: { net_ev: number; tail_risk_cost?: number; tailByp?: string; [k: string]: unknown };
+  headroom: HeadroomSnapshot;
+  status: "queued" | "executed";
+  executed_at?: string;
+}
+
 export interface LedgerEntry {
   id?: number;
   timestamp: string;
-  action: "scan_pass" | "scan_fail" | "trade_blocked" | "trade_opened" | "trade_closed";
+  action:
+    | "scan_pass"
+    | "scan_fail"
+    | "trade_blocked"
+    | "trade_opened"
+    | "trade_closed"
+    | "mode_change"
+    | "plan_created"
+    | "plan_executed";
   marketId: string;
   metadata: Record<string, unknown>;
 }
