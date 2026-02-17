@@ -5,11 +5,24 @@
  */
 
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "http";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { getModeState } from "./mode_manager";
 import { getPlans as getQueuedPlans, queueLength, clearQueue } from "./plan_queue";
 import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
+
+function getBuildId(): string {
+  if (process.env.GIT_SHA && String(process.env.GIT_SHA).trim()) return String(process.env.GIT_SHA).trim();
+  if (process.env.BUILD_ID && String(process.env.BUILD_ID).trim()) return String(process.env.BUILD_ID).trim();
+  try {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), "package.json"), "utf-8")) as { version?: string };
+    return pkg?.version ?? "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 export type ConfirmResult = { executed: boolean; positionId?: string; reason?: string } | null;
 
@@ -54,6 +67,7 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
       if (method === "GET" && path === "/status") {
         const state = getModeState();
         const p = getLastScanPlans();
+        res.setHeader("X-Build-Id", getBuildId());
         sendJson(res, 200, {
           mode: state.mode,
           panic: state.panic,
@@ -113,14 +127,14 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
           return createdAt(b).localeCompare(createdAt(a));
         });
 
+        const total = p.plans.length;
         const filteredCount = sorted.length;
         const out = effectiveLimit != null ? sorted.slice(0, effectiveLimit) : sorted;
         const payload = { lastScanTs: p.lastScanTs, count: filteredCount, plans: out, meta: p.meta };
-        res.writeHead(200, {
-          "Content-Type": "application/json",
-          "X-Plans-Total": String(p.plans.length),
-          "X-Plans-Filtered": String(filteredCount),
-        });
+        res.setHeader("X-Plans-Total", String(total));
+        res.setHeader("X-Plans-Filtered", String(filteredCount));
+        res.setHeader("X-Build-Id", getBuildId());
+        res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
         return;
       }

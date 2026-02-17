@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "tsc -p . && node --test dist/tests/risk_engine.test.js dist/tests/ev.test.js dist/tests/keys.test.js dist/tests/execution_modes.test.js dist/tests/filters.test.js",
+    "test": "tsc -p . && node --test dist/tests/risk_engine.test.js dist/tests/ev.test.js dist/tests/keys.test.js dist/tests/execution_modes.test.js dist/tests/filters.test.js dist/tests/control_api.test.js",
     "dev": "nodemon --watch src --ext ts --exec ts-node src/index.ts",
     "build": "tsc -p .",
     "start": "node dist/index.js"
