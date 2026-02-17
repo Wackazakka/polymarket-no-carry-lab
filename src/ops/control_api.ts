@@ -37,6 +37,8 @@ function parseBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   });
 }
 
+const MAX_PLANS_LIMIT = 500;
+
 function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(data));
@@ -64,10 +66,62 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
 
       if (method === "GET" && path === "/plans") {
         const p = getLastScanPlans();
-        const limitParam = url.includes("?") ? new URLSearchParams(url.split("?")[1]).get("limit") : null;
+        const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+
+        const limitParam = params.get("limit");
         const limitNum = limitParam != null ? Number(limitParam) : NaN;
-        const out = Number.isFinite(limitNum) && limitNum > 0 ? p.plans.slice(0, limitNum) : p.plans;
-        sendJson(res, 200, { lastScanTs: p.lastScanTs, count: p.count, plans: out, meta: p.meta });
+        const effectiveLimit =
+          Number.isFinite(limitNum) && limitNum > 0 ? Math.min(Math.floor(limitNum), MAX_PLANS_LIMIT) : null;
+
+        const minEvParam = params.get("min_ev");
+        const minEvRaw = minEvParam != null ? Number(minEvParam) : NaN;
+        const hasMinEv = Number.isFinite(minEvRaw);
+        const minEv = hasMinEv ? minEvRaw : 0;
+
+        const categoryParam = params.get("category");
+        const category = categoryParam != null ? String(categoryParam).trim() : "";
+        const hasCategory = category !== "";
+
+        const assumptionKeyParam = params.get("assumption_key");
+        const assumptionKey = assumptionKeyParam != null ? String(assumptionKeyParam).trim() : "";
+        const hasAssumptionKey = assumptionKey !== "";
+
+        type PlanRow = (typeof p.plans)[number];
+        let filtered: PlanRow[] = p.plans;
+        if (hasMinEv) {
+          filtered = filtered.filter((row) => {
+            const netEv = (row as { ev_breakdown?: { net_ev?: number } }).ev_breakdown?.net_ev;
+            return typeof netEv === "number" && netEv >= minEv;
+          });
+        }
+        if (hasCategory) {
+          filtered = filtered.filter((row) => (row as { category?: string | null }).category === category);
+        }
+        if (hasAssumptionKey) {
+          filtered = filtered.filter((row) => (row as { assumption_key?: string }).assumption_key === assumptionKey);
+        }
+
+        const netEv = (row: PlanRow): number => {
+          const v = (row as { ev_breakdown?: { net_ev?: number } }).ev_breakdown?.net_ev;
+          return typeof v === "number" ? v : -Infinity;
+        };
+        const createdAt = (row: PlanRow): string => (row as { created_at?: string }).created_at ?? "";
+        const sorted = [...filtered].sort((a, b) => {
+          const evA = netEv(a);
+          const evB = netEv(b);
+          if (evB !== evA) return evB - evA;
+          return createdAt(b).localeCompare(createdAt(a));
+        });
+
+        const filteredCount = sorted.length;
+        const out = effectiveLimit != null ? sorted.slice(0, effectiveLimit) : sorted;
+        const payload = { lastScanTs: p.lastScanTs, count: filteredCount, plans: out, meta: p.meta };
+        res.writeHead(200, {
+          "Content-Type": "application/json",
+          "X-Plans-Total": String(p.plans.length),
+          "X-Plans-Filtered": String(filteredCount),
+        });
+        res.end(JSON.stringify(payload));
         return;
       }
 
