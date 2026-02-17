@@ -11,8 +11,14 @@ const RECONNECT_BASE_MS = 2000;
 const MAX_RECONNECT_MS = 60000;
 const MAX_DEPTH_PER_SIDE = 50;
 
-/** In-memory orderbook per asset (token) ID. */
+/** In-memory orderbook per asset (token) ID. Keys are normalized (digits only) to match CLOB asset_id. */
 const books = new Map<string, OrderbookState>();
+
+/** Canonical key for storage/lookup: digits only. Aligns WS snapshot asset_id with candidate noTokenId. */
+export function normalizeBookKey(tokenId: string | null): string {
+  if (!tokenId) return "";
+  return String(tokenId).trim().replace(/[^0-9]/g, "");
+}
 
 function parseLevels(arr: Array<{ price: string; size: string }> | undefined): OrderLevel[] {
   if (!Array.isArray(arr)) return [];
@@ -32,10 +38,12 @@ function toAskLevels(arr: Array<{ price: string; size: string }> | undefined): O
 }
 
 function applySnapshot(assetId: string, item: Record<string, unknown>): void {
+  const key = normalizeBookKey(assetId);
+  if (!key) return;
   const bids = toBidLevels((item.bids ?? item.buys) as Array<{ price: string; size: string }>);
   const asks = toAskLevels((item.asks ?? item.sells) as Array<{ price: string; size: string }>);
-  books.set(assetId, { bids, asks, timestamp: Date.now() });
-  console.log("[orderbook_ws] snapshot applied for asset_id=" + assetId + " bids=" + bids.length + " asks=" + asks.length);
+  books.set(key, { bids, asks, timestamp: Date.now() });
+  console.log("[orderbook_ws] snapshot applied for asset_id=" + key + " bids=" + bids.length + " asks=" + asks.length);
 }
 
 function applyPriceChange(
@@ -74,12 +82,13 @@ function handleMessage(msg: unknown, onUpdate: (update: OrderbookUpdate) => void
     for (const item of msg) {
       const o = item as Record<string, unknown>;
       const assetId = o.asset_id as string | undefined;
-      if (!assetId) continue;
+      const key = normalizeBookKey(assetId ?? "");
+      if (!key) continue;
       const hasBook = (o.bids && Array.isArray(o.bids)) || (o.asks && Array.isArray(o.asks)) || (o.buys && Array.isArray(o.buys)) || (o.sells && Array.isArray(o.sells));
       if (hasBook) {
-        applySnapshot(assetId, o);
-        const state = books.get(assetId);
-        if (state) onUpdate({ assetId, marketId: (o.market as string) ?? "", book: state });
+        applySnapshot(assetId ?? "", o);
+        const state = books.get(key);
+        if (state) onUpdate({ assetId: key, marketId: (o.market as string) ?? "", book: state });
       }
     }
     return;
@@ -90,36 +99,40 @@ function handleMessage(msg: unknown, onUpdate: (update: OrderbookUpdate) => void
   if (Array.isArray(priceChanges)) {
     for (const pc of priceChanges) {
       const aid = (pc.asset_id ?? obj.asset_id) as string;
-      if (!aid) continue;
+      const key = normalizeBookKey(aid);
+      if (!key) continue;
       const price = parseFloat(String(pc.price ?? 0));
       const sizeStr = String(pc.size ?? "0");
       const sizeNum = parseFloat(sizeStr);
       const side = String(pc.side ?? "").toUpperCase();
       if (Number.isNaN(price)) continue;
-      const cur = books.get(aid) ?? { bids: [], asks: [], timestamp: Date.now() };
+      const cur = books.get(key) ?? { bids: [], asks: [], timestamp: Date.now() };
       const next = applyPriceChange(cur, price, sizeNum, side);
-      books.set(aid, next);
-      onUpdate({ assetId: aid, marketId: (obj.market as string) ?? "", book: next });
+      books.set(key, next);
+      onUpdate({ assetId: key, marketId: (obj.market as string) ?? "", book: next });
     }
     return;
   }
 
   const assetId = obj.asset_id as string | undefined;
-  if (!assetId) return;
+  const key = normalizeBookKey(assetId ?? "");
+  if (!key) return;
   const hasBook = (obj.bids && Array.isArray(obj.bids)) || (obj.asks && Array.isArray(obj.asks)) || (obj.buys && Array.isArray(obj.buys)) || (obj.sells && Array.isArray(obj.sells));
   if (hasBook) {
-    applySnapshot(assetId, obj);
-    const state = books.get(assetId);
-    if (state) onUpdate({ assetId, marketId: (obj.market as string) ?? "", book: state });
+    applySnapshot(assetId ?? "", obj);
+    const state = books.get(key);
+    if (state) onUpdate({ assetId: key, marketId: (obj.market as string) ?? "", book: state });
   }
 }
 
 /**
- * Get top of book for a token (NO side). Market ID is for lookup; we key by token ID in books.
+ * Get top of book for a token (NO side). Lookup uses same normalized key (asset_id) as WS/REST.
  */
 export function getTopOfBook(noTokenId: string | null, maxLevels: number = 5): TopOfBook | null {
   if (!noTokenId) return null;
-  const state = books.get(noTokenId);
+  const key = normalizeBookKey(noTokenId);
+  if (!key) return null;
+  const state = books.get(key);
   if (!state) return null;
   const bids = state.bids.slice(0, maxLevels);
   const asks = state.asks.slice(0, maxLevels);
@@ -143,9 +156,21 @@ export function getTopOfBook(noTokenId: string | null, maxLevels: number = 5): T
 /** Get full depth for a token (for fill simulation). */
 export function getDepth(noTokenId: string | null): OrderLevel[] {
   if (!noTokenId) return [];
-  const state = books.get(noTokenId);
+  const key = normalizeBookKey(noTokenId);
+  if (!key) return [];
+  const state = books.get(key);
   if (!state) return [];
   return state.asks.slice();
+}
+
+/** Debug: hasKey (using same normalized lookup), sample keys, size. */
+export function getBooksDebug(): { hasKey: (tokenId: string | null) => boolean; sampleKeys: string[]; size: number } {
+  const keys = [...books.keys()];
+  return {
+    hasKey: (tokenId: string | null) => (normalizeBookKey(tokenId) ? books.has(normalizeBookKey(tokenId)) : false),
+    sampleKeys: keys.slice(0, 3),
+    size: books.size,
+  };
 }
 
 export interface OrderbookUpdate {
@@ -267,9 +292,10 @@ export async function fetchOrderbookSnapshot(
   }>;
   if (!Array.isArray(json)) return;
   for (const book of json) {
-    const aid = book.asset_id;
+    const key = normalizeBookKey(book.asset_id);
+    if (!key) continue;
     const bids = toBidLevels(book.bids);
     const asks = toAskLevels(book.asks);
-    books.set(aid, { bids, asks, timestamp: Date.now() });
+    books.set(key, { bids, asks, timestamp: Date.now() });
   }
 }

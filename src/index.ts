@@ -11,6 +11,8 @@ import {
   getDepth,
   startOrderbookStream,
   fetchOrderbookSnapshot,
+  normalizeBookKey,
+  getBooksDebug,
 } from "./markets/orderbook_ws";
 import {
   evaluateMarketCandidate,
@@ -154,7 +156,7 @@ function main(): void {
 
     const withNoToken = markets.filter((m) => m.noTokenId);
     const subscribedCap = config.ws?.max_assets_subscribed ?? 200;
-    const tokenIds = [...new Set(withNoToken.map((m) => m.noTokenId!).slice(0, subscribedCap))];
+    const tokenIds = [...new Set(withNoToken.map((m) => normalizeBookKey(m.noTokenId!)).filter((k) => k.length >= 10).slice(0, subscribedCap))];
     await fetchOrderbookSnapshot(config.api.clobRestBaseUrl, tokenIds);
 
     const tokenToMarket = new Map<string, NormalizedMarket>();
@@ -188,9 +190,28 @@ function main(): void {
     let missingOrderbookCount = 0;
     let evaluatedWithBookCount = 0;
     const totalCandidates = withNoToken.length;
+    const booksDebug = getBooksDebug();
+    const warmupSkip = booksDebug.size < 5;
 
-    for (const market of withNoToken) {
+    for (let i = 0; i < withNoToken.length; i++) {
+      const market = withNoToken[i];
       if (!market.noTokenId) continue;
+      const lookupKey = normalizeBookKey(market.noTokenId);
+      const hasKey = booksDebug.hasKey(market.noTokenId);
+      if (i < 5) {
+        console.log(
+          "[scan] candidate",
+          i + 1,
+          "marketId=" + market.marketId,
+          "conditionId=" + market.conditionId,
+          "yesTokenId=" + (market.yesTokenId ?? ""),
+          "noTokenId=" + market.noTokenId,
+          "lookupKey=" + lookupKey,
+          "bookMap.has=" + hasKey,
+          "sampleKeys=" + JSON.stringify(booksDebug.sampleKeys)
+        );
+      }
+      if (warmupSkip) continue;
       const book = getTopOfBook(market.noTokenId, config.simulation.max_fill_depth_levels);
       const hasValidBook = book != null && book.noAsk != null && book.noBid != null;
       if (hasValidBook) evaluatedWithBookCount++;
