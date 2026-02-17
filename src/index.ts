@@ -249,12 +249,20 @@ function main(): void {
     await runScan().catch((e) => console.error("[startup]", e));
     const marketsForWs = await fetchActiveMarkets(config.api.gammaBaseUrl, { limit: 20, maxPages: 1 }).catch(() => []);
     const tokenIdsForWs = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, config.scanner.maxOrderbookSubscriptions))];
+    console.log("[orderbook_ws] [diagnostic] Subscribing tokenIds sample:", tokenIdsForWs.slice(0, 5));
+    console.log("[orderbook_ws] [diagnostic] tokenIds count:", tokenIdsForWs.length);
     if (tokenIdsForWs.length > 0) {
       orderbookStop = startOrderbookStream(
         tokenIdsForWs,
         () => {},
-        { wsUrl: config.api.clobWsBaseUrl }
+        { wsUrl: config.ws.market_url }
       );
+      console.log("[orderbook_ws] WS URL:", config.ws.market_url);
+      setTimeout(() => {
+        const firstTokenId = tokenIdsForWs[0];
+        const topOfBook = getTopOfBook(firstTokenId);
+        console.log("[debug] topOfBook for first token:", topOfBook == null ? null : { noBid: topOfBook.noBid, noAsk: topOfBook.noAsk, spread: topOfBook.spread });
+      }, 10000);
     }
     scanTimer = setInterval(() => {
       runScan().catch((e) => console.warn("[scan]", e.message));

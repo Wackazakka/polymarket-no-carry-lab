@@ -7,7 +7,6 @@ export interface OrderbookState {
   timestamp: number;
 }
 
-const DEFAULT_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/";
 const RECONNECT_BASE_MS = 2000;
 const MAX_RECONNECT_MS = 60000;
 
@@ -123,9 +122,9 @@ export interface OrderbookUpdate {
 export function startOrderbookStream(
   tokenIds: string[],
   onUpdate: (update: OrderbookUpdate) => void,
-  options: { wsUrl?: string } = {}
+  options: { wsUrl: string }
 ): { stop: () => void } {
-  const wsUrl = options.wsUrl ?? DEFAULT_WS_URL;
+  const wsUrl = options.wsUrl;
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let attempt = 0;
@@ -133,6 +132,7 @@ export function startOrderbookStream(
 
   function connect(): void {
     if (stopped) return;
+    console.log("[orderbook_ws] Connecting to", wsUrl);
     try {
       ws = new WebSocket(wsUrl);
     } catch (e) {
@@ -144,16 +144,23 @@ export function startOrderbookStream(
       attempt = 0;
       for (const tokenId of tokenIds) {
         const msg = JSON.stringify({
-          auth: {},
           type: "market",
           assets_ids: [tokenId],
         });
         ws?.send(msg);
       }
     });
+    let msgLogCount = 0;
+    const MAX_DIAG_LOGS = 5;
+    const TRUNCATE_LEN = 300;
     ws.on("message", (data: Buffer | string) => {
       try {
         const text = typeof data === "string" ? data : data.toString();
+        if (msgLogCount < MAX_DIAG_LOGS) {
+          msgLogCount++;
+          const truncated = text.length > TRUNCATE_LEN ? text.slice(0, TRUNCATE_LEN) + "…" : text;
+          console.log(`[orderbook_ws] [diagnostic] msg#${msgLogCount} ${truncated}`);
+        }
         const msg = JSON.parse(text) as Record<string, unknown>;
         const assetId = msg.asset_id as string | undefined;
         const market = msg.market as string | undefined;
