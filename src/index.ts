@@ -79,6 +79,12 @@ function shouldRunDailyReport(config: { reporting: { daily_report_hour_local: nu
   return nowInOsloHour() === config.reporting.daily_report_hour_local;
 }
 
+/** Strip to digits only; for API payload (e.g. no_token_id in /plans). */
+function normalizeTokenId(x: unknown): string {
+  if (typeof x !== "string") return "";
+  return x.replace(/[^0-9]/g, "");
+}
+
 function main(): void {
   const config = loadConfig();
   enforceNoLiveTrading(config);
@@ -433,8 +439,12 @@ function main(): void {
       plan_id: p.planId,
       created_at: p.createdAt,
       ...p.planPayload,
+      no_token_id: normalizeTokenId(p.planPayload.no_token_id),
       status: "proposed" as const,
     }));
+    if (plansForApi.length > 0 && /[^0-9]/.test(plansForApi[0].no_token_id)) {
+      console.warn("[bug] no_token_id not normalized:", plansForApi[0].no_token_id);
+    }
     setPlans(plansForApi, scanTsIso, { ev_mode: evMode });
     const storeCount = getPlans().count;
     const proposedCount = proposedPlans.length;
