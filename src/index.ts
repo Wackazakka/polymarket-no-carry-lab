@@ -24,6 +24,7 @@ import {
   simulateFill,
   openPaperPosition,
   type TradeProposal,
+  type FillResult,
 } from "./execution";
 import { computeAssumptionKey, computeWindowKey } from "./assumption/keys";
 import {
@@ -33,6 +34,7 @@ import {
   inferAssumptionGroup,
   computeResolutionWindowBucket,
   type TradeProposalForRisk,
+  type AllowTradeResult,
 } from "./risk/risk_engine";
 import { initStore } from "./state/store";
 import { initPositionsDb, listPositions, insertPosition } from "./state/positions";
@@ -60,6 +62,7 @@ import {
 } from "./ops/plan_queue";
 import { createControlApi } from "./ops/control_api";
 import type { ConfirmResult } from "./ops/control_api";
+import { setPlans, getPlans } from "./control/plan_store";
 
 const TZ_OSLO = "Europe/Oslo";
 
@@ -277,6 +280,24 @@ function main(): void {
 
     const positions = listPositions(dataDir, true);
     let riskState = buildRiskStateFromPositions(positions);
+    const nowTs = Date.now();
+    const scanTsIso = new Date(nowTs).toISOString();
+
+    /** Phase 1: build the single proposed-plans array (same length as "Trades proposed", same items as ops loop). */
+    const proposedPlans: Array<{
+      planId: string;
+      createdAt: string;
+      planPayload: Omit<TradePlan, "plan_id" | "created_at" | "status">;
+      market: NormalizedMarket;
+      proposal: TradeProposal;
+      effectiveFill: FillResult;
+      allow: AllowTradeResult;
+      evResult: { net_ev: number; tail_risk_cost?: number; tailByp?: string; tail_bypass_reason?: string };
+      category: string | null;
+      assumptionKey: string;
+      windowKey: string;
+      sizeToOpen: number;
+    }> = [];
 
     for (const { market, book, filterResult } of passed) {
       const entryPrice = book!.noAsk!;
@@ -301,7 +322,6 @@ function main(): void {
       const category = inferCategory(market);
       const assumptionGroup = inferAssumptionGroup(market);
       const resolutionWindowBucket = computeResolutionWindowBucket(market.resolutionTime, config);
-      const nowTs = Date.now();
       const assumptionKey = computeAssumptionKey(market, config.fees.ev_mode, nowTs);
       const windowKey = computeWindowKey(market, nowTs);
 
@@ -331,7 +351,6 @@ function main(): void {
         continue;
       }
 
-      tradesProposed++;
       const riskProposal: TradeProposalForRisk = {
         marketId: proposal.marketId,
         conditionId: proposal.conditionId,
@@ -390,67 +409,101 @@ function main(): void {
         },
         headroom: allow.headroom,
       };
+      const createdAt = new Date().toISOString();
+      proposedPlans.push({
+        planId,
+        createdAt,
+        planPayload,
+        market,
+        proposal,
+        effectiveFill,
+        allow,
+        evResult,
+        category,
+        assumptionKey,
+        windowKey,
+        sizeToOpen,
+      });
+    }
 
+    /** Report count = length of the real proposed array. */
+    tradesProposed = proposedPlans.length;
+    /** 1:1 JSON-safe copy for plan_store (same length as proposedPlans). */
+    const plansForApi = proposedPlans.map((p) => ({
+      plan_id: p.planId,
+      created_at: p.createdAt,
+      ...p.planPayload,
+      status: "proposed" as const,
+    }));
+    setPlans(plansForApi, scanTsIso, { ev_mode: evMode });
+    const storeCount = getPlans().count;
+    const proposedCount = proposedPlans.length;
+    console.log(`[debug] plan_store_count=${storeCount} proposed_count=${proposedCount}`);
+    if (storeCount !== proposedCount) {
+      console.log(`[bug] proposed_count_mismatch plan_store_count=${storeCount} proposed_count=${proposedCount}`);
+    }
+
+    /** Phase 2: ops loop over the same proposed-plans array. */
+    for (const item of proposedPlans) {
+      const { planId, planPayload, market: marketItem, proposal: proposalItem, effectiveFill: effectiveFillItem, allow: allowItem, evResult: evResultItem, category: cat, assumptionKey: ak, windowKey: wk, sizeToOpen: sizeToOpenItem } = item;
       if (getMode() === "DISARMED" || isPanic()) {
-        console.log(`[ops] Skipping execution (mode=${getMode()}, panic=${isPanic()}) for ${market.marketId}`);
+        console.log(`[ops] Skipping execution (mode=${getMode()}, panic=${isPanic()}) for ${marketItem.marketId}`);
         continue;
       }
-
       if (isConfirmMode()) {
         const plan: TradePlan = {
           ...planPayload,
           plan_id: planId,
-          created_at: new Date().toISOString(),
+          created_at: item.createdAt,
           status: "queued",
         };
         enqueuePlan(plan);
         appendLedger(dataDir, {
           timestamp: new Date().toISOString(),
           action: "plan_created",
-          marketId: market.marketId,
-          metadata: { plan_id: planId, sizeUsd: sizeToOpen, assumption_key: assumptionKey, window_key: windowKey },
+          marketId: marketItem.marketId,
+          metadata: { plan_id: planId, sizeUsd: sizeToOpenItem, assumption_key: ak, window_key: wk },
         });
-        console.log(`[ops] Plan queued ${planId} for ${market.marketId} (ARMED_CONFIRM)`);
+        console.log(`[ops] Plan queued ${planId} for ${marketItem.marketId} (ARMED_CONFIRM)`);
         continue;
       }
-
       if (isAutoExecute()) {
-        const position = openPaperPosition(proposal, effectiveFill, randomUUID());
+        const position = openPaperPosition(proposalItem, effectiveFillItem, randomUUID());
         insertPosition(dataDir, position);
         riskState = buildRiskStateFromPositions(listPositions(dataDir, true));
         appendLedger(dataDir, {
           timestamp: new Date().toISOString(),
           action: "trade_opened",
-          marketId: market.marketId,
+          marketId: marketItem.marketId,
           metadata: {
             positionId: position.id,
             sizeUsd: position.sizeUsd,
-            assumptionKey,
-            windowKey,
+            assumptionKey: ak,
+            windowKey: wk,
             plan_id: planId,
-            tail_risk_cost: evResult.tail_risk_cost,
-            tailByp: evResult.tailByp,
-            tail_bypass_reason: evResult.tail_bypass_reason,
+            tail_risk_cost: evResultItem.tail_risk_cost,
+            tailByp: evResultItem.tailByp,
+            tail_bypass_reason: evResultItem.tail_bypass_reason,
           },
         });
         appendLedger(dataDir, {
           timestamp: new Date().toISOString(),
           action: "plan_executed",
-          marketId: market.marketId,
+          marketId: marketItem.marketId,
           metadata: { plan_id: planId, positionId: position.id, sizeUsd: position.sizeUsd },
         });
-        console.log(`[paper] OPENED ${market.marketId} size=${position.sizeUsd.toFixed(2)} USD (plan ${planId})`);
+        console.log(`[paper] OPENED ${marketItem.marketId} size=${position.sizeUsd.toFixed(2)} USD (plan ${planId})`);
         topCandidatesByNetEv.push({
-          marketId: market.marketId,
-          question: market.question,
-          net_ev: evResult.net_ev,
-          tail_risk_cost: evResult.tail_risk_cost,
-          tailByp: evResult.tailByp,
-          tail_bypass_reason: evResult.tail_bypass_reason,
-          category,
-          window_key: windowKey,
-          assumption_key: assumptionKey,
-          headroom: allow.headroom,
+          marketId: marketItem.marketId,
+          question: marketItem.question,
+          net_ev: evResultItem.net_ev,
+          tail_risk_cost: evResultItem.tail_risk_cost,
+          tailByp: evResultItem.tailByp,
+          tail_bypass_reason: evResultItem.tail_bypass_reason,
+          category: cat,
+          window_key: wk,
+          assumption_key: ak,
+          headroom: allowItem.headroom,
         });
       }
     }

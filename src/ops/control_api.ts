@@ -6,7 +6,8 @@
 
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "http";
 import { getModeState } from "./mode_manager";
-import { getPlans, queueLength, clearQueue } from "./plan_queue";
+import { getPlans as getQueuedPlans, queueLength, clearQueue } from "./plan_queue";
+import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
 
@@ -50,12 +51,23 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
     try {
       if (method === "GET" && path === "/status") {
         const state = getModeState();
-        sendJson(res, 200, { mode: state.mode, panic: state.panic, queue_length: queueLength() });
+        const p = getLastScanPlans();
+        sendJson(res, 200, {
+          mode: state.mode,
+          panic: state.panic,
+          queue_length: queueLength(),
+          lastScanTs: p.lastScanTs,
+          proposedCountLastScan: p.count,
+        });
         return;
       }
 
       if (method === "GET" && path === "/plans") {
-        sendJson(res, 200, { plans: getPlans() });
+        const p = getLastScanPlans();
+        const limitParam = url.includes("?") ? new URLSearchParams(url.split("?")[1]).get("limit") : null;
+        const limitNum = limitParam != null ? Number(limitParam) : NaN;
+        const out = Number.isFinite(limitNum) && limitNum > 0 ? p.plans.slice(0, limitNum) : p.plans;
+        sendJson(res, 200, { lastScanTs: p.lastScanTs, count: p.count, plans: out, meta: p.meta });
         return;
       }
 
