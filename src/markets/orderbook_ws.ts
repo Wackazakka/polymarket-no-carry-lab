@@ -9,6 +9,7 @@ export interface OrderbookState {
 
 const RECONNECT_BASE_MS = 2000;
 const MAX_RECONNECT_MS = 60000;
+const MAX_DEPTH_PER_SIDE = 50;
 
 /** In-memory orderbook per asset (token) ID. */
 const books = new Map<string, OrderbookState>();
@@ -24,54 +25,92 @@ function parseLevels(arr: Array<{ price: string; size: string }> | undefined): O
 }
 
 function toBidLevels(arr: Array<{ price: string; size: string }> | undefined): OrderLevel[] {
-  return parseLevels(arr).sort((a, b) => b.price - a.price);
+  return parseLevels(arr).sort((a, b) => b.price - a.price).slice(0, MAX_DEPTH_PER_SIDE);
 }
 function toAskLevels(arr: Array<{ price: string; size: string }> | undefined): OrderLevel[] {
-  return parseLevels(arr).sort((a, b) => a.price - b.price);
+  return parseLevels(arr).sort((a, b) => a.price - b.price).slice(0, MAX_DEPTH_PER_SIDE);
 }
 
-function updateBookFromMessage(assetId: string, msg: Record<string, unknown>): void {
-  const eventType = msg.event_type as string | undefined;
-  if (eventType === "book") {
-    const bids = toBidLevels((msg.bids ?? msg.buys) as Array<{ price: string; size: string }>);
-    const asks = toAskLevels((msg.asks ?? msg.sells) as Array<{ price: string; size: string }>);
-    const ts = typeof msg.timestamp === "string" ? parseInt(msg.timestamp, 10) : Date.now();
-    books.set(assetId, { bids, asks, timestamp: ts });
-    return;
+function applySnapshot(assetId: string, item: Record<string, unknown>): void {
+  const bids = toBidLevels((item.bids ?? item.buys) as Array<{ price: string; size: string }>);
+  const asks = toAskLevels((item.asks ?? item.sells) as Array<{ price: string; size: string }>);
+  books.set(assetId, { bids, asks, timestamp: Date.now() });
+  console.log("[orderbook_ws] snapshot applied for asset_id=" + assetId + " bids=" + bids.length + " asks=" + asks.length);
+}
+
+function applyPriceChange(
+  cur: OrderbookState,
+  price: number,
+  sizeNum: number,
+  side: string
+): OrderbookState {
+  const bids = cur.bids.slice();
+  const asks = cur.asks.slice();
+  if (side === "BUY") {
+    const idx = bids.findIndex((l) => l.price === price);
+    if (sizeNum === 0) {
+      if (idx >= 0) bids.splice(idx, 1);
+    } else {
+      if (idx >= 0) bids[idx].size = sizeNum;
+      else bids.push({ price, size: sizeNum });
+    }
+    bids.sort((a, b) => b.price - a.price);
+    return { bids: bids.slice(0, MAX_DEPTH_PER_SIDE), asks, timestamp: Date.now() };
+  } else {
+    const idx = asks.findIndex((l) => l.price === price);
+    if (sizeNum === 0) {
+      if (idx >= 0) asks.splice(idx, 1);
+    } else {
+      if (idx >= 0) asks[idx].size = sizeNum;
+      else asks.push({ price, size: sizeNum });
+    }
+    asks.sort((a, b) => a.price - b.price);
+    return { bids, asks: asks.slice(0, MAX_DEPTH_PER_SIDE), timestamp: Date.now() };
   }
-  if (eventType === "price_change") {
-    const priceChanges = msg.price_changes as Array<{
-      asset_id?: string;
-      best_bid?: string;
-      best_ask?: string;
-      price?: string;
-      size?: string;
-      side?: string;
-    }> | undefined;
-    if (Array.isArray(priceChanges)) {
-      for (const pc of priceChanges) {
-        const aid = (pc.asset_id ?? assetId) as string;
-        const cur = books.get(aid) ?? { bids: [], asks: [], timestamp: Date.now() };
-        const price = parseFloat(String(pc.price ?? 0));
-        const size = parseFloat(String(pc.size ?? 0));
-        const side = String(pc.side ?? "").toUpperCase();
-        const bestBid = parseFloat(String(pc.best_bid ?? 0));
-        const bestAsk = parseFloat(String(pc.best_ask ?? 0));
-        if (side === "BUY") {
-          const idx = cur.bids.findIndex((l) => l.price === price);
-          if (idx >= 0) cur.bids[idx].size = size;
-          else if (size > 0) cur.bids.push({ price, size });
-          if (bestBid >= 0) cur.bids = cur.bids.filter((l) => l.size > 0).sort((a, b) => b.price - a.price);
-        } else {
-          const idx = cur.asks.findIndex((l) => l.price === price);
-          if (idx >= 0) cur.asks[idx].size = size;
-          else if (size > 0) cur.asks.push({ price, size });
-          if (bestAsk >= 0) cur.asks = cur.asks.filter((l) => l.size > 0).sort((a, b) => a.price - b.price);
-        }
-        cur.timestamp = Date.now();
-        books.set(aid, cur);
+}
+
+function handleMessage(msg: unknown, onUpdate: (update: OrderbookUpdate) => void): void {
+  if (Array.isArray(msg)) {
+    for (const item of msg) {
+      const o = item as Record<string, unknown>;
+      const assetId = o.asset_id as string | undefined;
+      if (!assetId) continue;
+      const hasBook = (o.bids && Array.isArray(o.bids)) || (o.asks && Array.isArray(o.asks)) || (o.buys && Array.isArray(o.buys)) || (o.sells && Array.isArray(o.sells));
+      if (hasBook) {
+        applySnapshot(assetId, o);
+        const state = books.get(assetId);
+        if (state) onUpdate({ assetId, marketId: (o.market as string) ?? "", book: state });
       }
     }
+    return;
+  }
+
+  const obj = msg as Record<string, unknown>;
+  const priceChanges = obj.price_changes as Array<{ asset_id?: string; price?: string; size?: string; side?: string }> | undefined;
+  if (Array.isArray(priceChanges)) {
+    for (const pc of priceChanges) {
+      const aid = (pc.asset_id ?? obj.asset_id) as string;
+      if (!aid) continue;
+      const price = parseFloat(String(pc.price ?? 0));
+      const sizeStr = String(pc.size ?? "0");
+      const sizeNum = parseFloat(sizeStr);
+      const side = String(pc.side ?? "").toUpperCase();
+      if (Number.isNaN(price)) continue;
+      const cur = books.get(aid) ?? { bids: [], asks: [], timestamp: Date.now() };
+      const next = applyPriceChange(cur, price, sizeNum, side);
+      books.set(aid, next);
+      onUpdate({ assetId: aid, marketId: (obj.market as string) ?? "", book: next });
+    }
+    return;
+  }
+
+  const assetId = obj.asset_id as string | undefined;
+  if (!assetId) return;
+  const hasBook = (obj.bids && Array.isArray(obj.bids)) || (obj.asks && Array.isArray(obj.asks)) || (obj.buys && Array.isArray(obj.buys)) || (obj.sells && Array.isArray(obj.sells));
+  if (hasBook) {
+    applySnapshot(assetId, obj);
+    const state = books.get(assetId);
+    if (state) onUpdate({ assetId, marketId: (obj.market as string) ?? "", book: state });
   }
 }
 
@@ -157,16 +196,8 @@ export function startOrderbookStream(
           const truncated = text.length > TRUNCATE_LEN ? text.slice(0, TRUNCATE_LEN) + "…" : text;
           console.log(`[orderbook_ws] [diagnostic] msg#${msgLogCount} ${truncated}`);
         }
-        const msg = JSON.parse(text) as Record<string, unknown>;
-        const assetId = msg.asset_id as string | undefined;
-        const market = msg.market as string | undefined;
-        if (assetId) {
-          updateBookFromMessage(assetId, msg);
-          const state = books.get(assetId);
-          if (state && market) {
-            onUpdate({ assetId, marketId: market, book: state });
-          }
-        }
+        const msg = JSON.parse(text) as unknown;
+        handleMessage(msg, onUpdate);
       } catch {
         // ignore parse errors
       }

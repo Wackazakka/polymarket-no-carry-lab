@@ -12,7 +12,7 @@ import {
   startOrderbookStream,
   fetchOrderbookSnapshot,
 } from "./markets/orderbook_ws";
-import { evaluateMarketCandidate } from "./strategy/filters";
+import { evaluateMarketCandidate, evaluateMarketCandidateWithDetails, type FailedCheck } from "./strategy/filters";
 import { computeEV } from "./strategy/ev";
 import {
   simulateFill,
@@ -119,7 +119,8 @@ function main(): void {
     }
 
     const withNoToken = markets.filter((m) => m.noTokenId);
-    const tokenIds = [...new Set(withNoToken.map((m) => m.noTokenId!).slice(0, config.scanner.maxOrderbookSubscriptions))];
+    const subscribedCap = config.ws?.max_assets_subscribed ?? 200;
+    const tokenIds = [...new Set(withNoToken.map((m) => m.noTokenId!).slice(0, subscribedCap))];
     await fetchOrderbookSnapshot(config.api.clobRestBaseUrl, tokenIds);
 
     const tokenToMarket = new Map<string, NormalizedMarket>();
@@ -130,28 +131,81 @@ function main(): void {
     candidatesScanned += markets.length;
     const now = new Date();
     const selection = config.selection;
-    const filterConfig = {
-      min_no_price: selection.min_no_price,
-      max_spread: selection.max_spread,
-      min_liquidity_usd: selection.min_liquidity_usd,
-      max_time_to_resolution_hours: selection.max_time_to_resolution_hours,
-    };
+    const diagnosticLoose = Boolean(config.diagnostic_loose_filters);
+    const filterConfig = diagnosticLoose
+      ? {
+          min_no_price: 0.8,
+          max_spread: 0.05,
+          min_liquidity_usd: 100,
+          max_time_to_resolution_hours: selection.max_time_to_resolution_hours * 1.5,
+        }
+      : {
+          min_no_price: selection.min_no_price,
+          max_spread: selection.max_spread,
+          min_liquidity_usd: selection.min_liquidity_usd,
+          max_time_to_resolution_hours: selection.max_time_to_resolution_hours,
+        };
+    if (diagnosticLoose) {
+      console.log("[diagnostic] Using loose filter thresholds: min_no_price=0.8 max_spread=0.05 min_liquidity_usd=100 max_time_to_resolution_hours=" + filterConfig.max_time_to_resolution_hours);
+    }
 
     const passed: Array<{ market: NormalizedMarket; book: ReturnType<typeof getTopOfBook>; filterResult: ReturnType<typeof evaluateMarketCandidate> }> = [];
+    const failedWithDetails: Array<{ market: NormalizedMarket; failedChecks: FailedCheck[] }> = [];
+    let missingOrderbookCount = 0;
+    let evaluatedWithBookCount = 0;
+    const totalCandidates = withNoToken.length;
+
     for (const market of withNoToken) {
       if (!market.noTokenId) continue;
       const book = getTopOfBook(market.noTokenId, config.simulation.max_fill_depth_levels);
-      const filterResult = evaluateMarketCandidate(market, book, now, filterConfig);
-      if (filterResult.pass) {
-        candidatesPassedFilters++;
-        passed.push({ market, book, filterResult });
+      const hasValidBook = book != null && book.noAsk != null && book.noBid != null;
+      if (hasValidBook) evaluatedWithBookCount++;
+      else missingOrderbookCount++;
+
+      if (diagnosticLoose) {
+        const result = evaluateMarketCandidateWithDetails(market, book, now, filterConfig);
+        if (result.pass) {
+          candidatesPassedFilters++;
+          passed.push({ market, book, filterResult: result });
+        } else {
+          if (hasValidBook) failedWithDetails.push({ market, failedChecks: result.failedChecks });
+          appendLedger(dataDir, {
+            timestamp: now.toISOString(),
+            action: "scan_fail",
+            marketId: market.marketId,
+            metadata: { reasons: result.reasons },
+          });
+        }
       } else {
-        appendLedger(dataDir, {
-          timestamp: now.toISOString(),
-          action: "scan_fail",
-          marketId: market.marketId,
-          metadata: { reasons: filterResult.reasons },
-        });
+        const filterResult = evaluateMarketCandidate(market, book, now, filterConfig);
+        if (filterResult.pass) {
+          candidatesPassedFilters++;
+          passed.push({ market, book, filterResult });
+        } else {
+          appendLedger(dataDir, {
+            timestamp: now.toISOString(),
+            action: "scan_fail",
+            marketId: market.marketId,
+            metadata: { reasons: filterResult.reasons },
+          });
+        }
+      }
+    }
+
+    if (diagnosticLoose) {
+      console.log("[diagnostic] orderbook coverage: evaluatedWithBook=" + evaluatedWithBookCount + " missingOrderbook=" + missingOrderbookCount + " totalCandidates=" + totalCandidates + " subscribedTokens=" + tokenIds.length);
+    }
+
+    if (diagnosticLoose && failedWithDetails.length > 0) {
+      const nearMisses = failedWithDetails.filter((f) => f.failedChecks.length === 1).slice(0, 10);
+      console.log("[diagnostic] Near misses (failed by only one filter), top 10:");
+      for (const { market, failedChecks } of nearMisses) {
+        const fc = failedChecks[0];
+        const byHowMuch = fc.threshold !== 0 ? ` (e.g. ${fc.check}=${fc.value} > ${fc.threshold})` : "";
+        console.log("[diagnostic]   " + market.marketId.slice(0, 24) + "… " + fc.check + ": " + fc.message + byHowMuch);
+      }
+      if (nearMisses.length === 0) {
+        console.log("[diagnostic]   (none — all failures had more than one filter)");
       }
     }
 
@@ -253,7 +307,8 @@ function main(): void {
   (async () => {
     await runScan().catch((e) => console.error("[startup]", e));
     const marketsForWs = await fetchActiveMarkets(config.api.gammaBaseUrl, { limit: 20, maxPages: 1 }).catch(() => []);
-    const tokenIdsRaw = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, config.scanner.maxOrderbookSubscriptions))];
+    const wsSubscribedCap = config.ws?.max_assets_subscribed ?? 200;
+    const tokenIdsRaw = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, wsSubscribedCap))];
     const tokenIdsForWs = tokenIdsRaw.map(sanitizeTokenId).filter((x): x is string => x != null);
     console.log("[orderbook_ws] [diagnostic] tokenIds raw count:", tokenIdsRaw.length, "sanitized count:", tokenIdsForWs.length);
     console.log("[orderbook_ws] [diagnostic] Subscribing tokenIds sample (sanitized):", tokenIdsForWs.slice(0, 5));

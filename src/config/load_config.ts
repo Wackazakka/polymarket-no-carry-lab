@@ -14,6 +14,13 @@ const ConfigSchema = z.object({
     clobWsBaseUrl: z.string(),
     gammaBaseUrl: z.string().url(),
   }),
+  ws: z
+    .object({
+      market_url: z.string(),
+      max_assets_subscribed: z.number().int().positive().optional().default(200),
+    })
+    .optional()
+    .default({ market_url: "wss://ws-subscriptions-clob.polymarket.com/ws/market", max_assets_subscribed: 200 }),
   scanner: z.object({
     pollIntervalMs: z.number().int().positive(),
     maxOrderbookSubscriptions: z.number().int().positive(),
@@ -55,6 +62,7 @@ const ConfigSchema = z.object({
   db: z.object({
     path: z.string(),
   }),
+  diagnostic_loose_filters: z.boolean().optional().default(false),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

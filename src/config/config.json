@@ -5,8 +5,7 @@
     "gammaBaseUrl": "https://gamma-api.polymarket.com"
   },
   "ws": {
-    "market_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market",
-    "max_assets_subscribed": 200
+    "market_url": "wss://ws-subscriptions-clob.polymarket.com/ws/market"
   },
   "scanner": {
     "pollIntervalMs": 60000,
@@ -54,5 +53,5 @@
   "db": {
     "path": "./data/polymarket_lab.db"
   },
-  "diagnostic_loose_filters": false
+  "diagnostic_loose_filters": true
 }
