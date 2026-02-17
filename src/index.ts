@@ -245,12 +245,18 @@ function main(): void {
     maybeReport();
   }
 
+  function sanitizeTokenId(x: string): string | null {
+    const s = String(x).trim().replace(/[^0-9]/g, "");
+    return s.length >= 10 ? s : null;
+  }
+
   (async () => {
     await runScan().catch((e) => console.error("[startup]", e));
     const marketsForWs = await fetchActiveMarkets(config.api.gammaBaseUrl, { limit: 20, maxPages: 1 }).catch(() => []);
-    const tokenIdsForWs = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, config.scanner.maxOrderbookSubscriptions))];
-    console.log("[orderbook_ws] [diagnostic] Subscribing tokenIds sample:", tokenIdsForWs.slice(0, 5));
-    console.log("[orderbook_ws] [diagnostic] tokenIds count:", tokenIdsForWs.length);
+    const tokenIdsRaw = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, config.scanner.maxOrderbookSubscriptions))];
+    const tokenIdsForWs = tokenIdsRaw.map(sanitizeTokenId).filter((x): x is string => x != null);
+    console.log("[orderbook_ws] [diagnostic] tokenIds raw count:", tokenIdsRaw.length, "sanitized count:", tokenIdsForWs.length);
+    console.log("[orderbook_ws] [diagnostic] Subscribing tokenIds sample (sanitized):", tokenIdsForWs.slice(0, 5));
     if (tokenIdsForWs.length > 0) {
       orderbookStop = startOrderbookStream(
         tokenIdsForWs,
@@ -259,9 +265,11 @@ function main(): void {
       );
       console.log("[orderbook_ws] WS URL:", config.ws.market_url);
       setTimeout(() => {
-        const firstTokenId = tokenIdsForWs[0];
-        const topOfBook = getTopOfBook(firstTokenId);
-        console.log("[debug] topOfBook for first token:", topOfBook == null ? null : { noBid: topOfBook.noBid, noAsk: topOfBook.noAsk, spread: topOfBook.spread });
+        const toCheck = tokenIdsForWs.slice(0, 3);
+        for (let i = 0; i < toCheck.length; i++) {
+          const topOfBook = getTopOfBook(toCheck[i]);
+          console.log("[debug] topOfBook for token", i + 1, toCheck[i].slice(0, 12) + "…:", topOfBook == null ? null : { noBid: topOfBook.noBid, noAsk: topOfBook.noAsk, spread: topOfBook.spread });
+        }
       }, 10000);
     }
     scanTimer = setInterval(() => {

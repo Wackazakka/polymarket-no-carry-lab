@@ -142,13 +142,9 @@ export function startOrderbookStream(
     }
     ws.on("open", () => {
       attempt = 0;
-      for (const tokenId of tokenIds) {
-        const msg = JSON.stringify({
-          type: "market",
-          assets_ids: [tokenId],
-        });
-        ws?.send(msg);
-      }
+      const msg = { type: "MARKET", assets_ids: tokenIds };
+      ws?.send(JSON.stringify(msg));
+      console.log("[orderbook_ws] [diagnostic] Sent initial subscribe, assets_ids count:", tokenIds.length);
     });
     let msgLogCount = 0;
     const MAX_DIAG_LOGS = 5;
