@@ -83,7 +83,7 @@ export interface HeadroomSnapshot {
   per_market: number;
 }
 
-/** Queued trade plan (idempotency key = plan_id). */
+/** Queued trade plan (idempotency key = plan_id). no_token_id holds the outcome token (NO or YES). */
 export interface TradePlan {
   plan_id: string;
   created_at: string;
@@ -91,7 +91,7 @@ export interface TradePlan {
   market_id: string;
   condition_id: string;
   no_token_id: string;
-  outcome: "NO";
+  outcome: "NO" | "YES";
   sizeUsd: number;
   limit_price: number;
   category: string | null;

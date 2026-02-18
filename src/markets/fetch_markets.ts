@@ -126,7 +126,7 @@ export async function fetchActiveMarkets(
     const events = await fetchEventsPage(gammaBaseUrl, limit, offset);
     const markets = eventsToMarkets(events);
     for (const m of markets) {
-      if (!m.closed && m.noTokenId) all.push(m);
+      if (!m.closed && (m.noTokenId || m.yesTokenId)) all.push(m);
     }
     if (events.length < limit) break;
     offset += limit;

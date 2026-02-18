@@ -72,6 +72,36 @@ const ConfigSchema = z.object({
     .optional()
     .default({ port: 3344 }),
   diagnostic_loose_filters: z.boolean().optional().default(false),
+  carry: z
+    .object({
+      enabled: z.boolean().optional().default(true),
+      maxDays: z.number().positive().optional().default(30),
+      roiMinPct: z.number().optional().default(6),
+      roiMaxPct: z.number().optional().default(7),
+      maxSpread: z.number().min(0).max(1).optional().default(0.02),
+      minAskLiqUsd: z.number().min(0).optional().default(500),
+      sizeUsd: z.number().positive().optional(),
+      bankroll_fraction: z.number().min(0).max(1).optional(),
+      allowCategories: z.array(z.string()).optional().default([]),
+      allowKeywords: z.array(z.string()).optional().default([]),
+      allowSyntheticAsk: z.boolean().optional().default(false),
+      syntheticTick: z.number().min(0).max(1).optional().default(0.01),
+      syntheticMaxAsk: z.number().min(0).max(1).optional().default(0.995),
+    })
+    .optional()
+    .default({
+      enabled: true,
+      maxDays: 30,
+      roiMinPct: 6,
+      roiMaxPct: 7,
+      maxSpread: 0.02,
+      minAskLiqUsd: 500,
+      allowCategories: [],
+      allowKeywords: [],
+      allowSyntheticAsk: false,
+      syntheticTick: 0.01,
+      syntheticMaxAsk: 0.995,
+    }),
 });
 
 export type Config = z.infer<typeof ConfigSchema>;

@@ -54,5 +54,18 @@
   "db": {
     "path": "./data/polymarket_lab.db"
   },
-  "diagnostic_loose_filters": false
+  "diagnostic_loose_filters": false,
+  "carry": {
+    "enabled": true,
+    "maxDays": 30,
+    "roiMinPct": 6,
+    "roiMaxPct": 7,
+    "maxSpread": 0.02,
+    "minAskLiqUsd": 500,
+    "sizeUsd": 100,
+    "allowCategories": ["Politics", "Economics"],
+    "allowKeywords": ["Fed", "CPI", "election", "rate decision", "court"],
+    "allowSyntheticAsk": false,
+    "syntheticTick": 0.01
+  }
 }
