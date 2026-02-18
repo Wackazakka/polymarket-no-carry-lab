@@ -43,8 +43,10 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 - **count_returned** — Length of `plans` in this response.
 - **limit**, **offset** — Applied pagination (defaults or clamped).
 
-Each plan has `ev_breakdown` (object). For **carry (YES)** plans, `ev_breakdown` always includes pricing observability and may include synthetic flags:
-- `mode: "carry"`, `carry_roi_pct`, `hold_to_resolution`, `time_to_resolution_days`
+Each plan has `ev_breakdown` (object). **ev_breakdown.mode** is `"capture"` | `"baseline"` for NO-outcome plans, or `"carry"` for YES-outcome carry plans. Plan ids are unique by `market_id + outcome + mode` so capture and carry plans for the same market both persist.
+
+For **carry (YES)** plans, `ev_breakdown` always includes: `mode: "carry"`, `carry_roi_pct`, `hold_to_resolution`, `time_to_resolution_days`.
+
 - **Pricing (always present):** `yes_bid` (number or null), `yes_ask` (number), `spread` (number when both bid and ask exist, else null; spread = yes_ask − yes_bid), `edge_abs` (number; edge = 1 − yes_ask, upside per $1 share), `spread_edge_ratio` (number when spread and edge &gt; 0, else null; spread / edge_abs), `price_source` (`"ws"` | `"http"` | `"synthetic_ask"`), and optionally `http_fallback_used: true` when CLOB HTTP was used for top-of-book.
 - **Edge-vs-spread rule:** a candidate is accepted only if spread ≤ edge_abs × `spreadEdgeMaxRatio` (config). So spread must not be too large relative to carry edge. The absolute `maxSpread` check still applies; this is an additional proportional gate. The carry scan also exposes **carry_debug** counters: `spread_edge_too_high` (rejected because spread &gt; edge_abs × spreadEdgeMaxRatio) and `edge_too_small` (rejected because edge_abs ≤ spreadEdgeMinAbs).
 - **Synthetic ask (PAPER ONLY):** when YES book had no ask, a synthetic entry price can be used for paper testing. Then `ev_breakdown` also includes `synthetic_ask: true`, `synthetic_ask_price`, `synthetic_reason` (e.g. `"no_ask_using_noBid_plus_tick"`), `top_noBid`, `top_noAsk`. These plans are **never** executed; they are for analysis only.

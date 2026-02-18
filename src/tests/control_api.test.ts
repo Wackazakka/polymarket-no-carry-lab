@@ -72,6 +72,48 @@ describe("control API GET /status", () => {
 });
 
 describe("control API GET /plans", () => {
+  it("GET /plans returns at least one plan with ev_breakdown.mode=carry and carry_roi_pct when store has carry plan", async () => {
+    const carryPlan = {
+      plan_id: "carry-plan-test-id",
+      created_at: new Date().toISOString(),
+      market_id: "m-carry",
+      condition_id: "c-carry",
+      no_token_id: "12345",
+      outcome: "YES" as const,
+      sizeUsd: 100,
+      limit_price: 0.94,
+      category: "Politics",
+      assumption_key: "ak-carry",
+      window_key: "W_carry_0_30D",
+      ev_breakdown: {
+        mode: "carry" as const,
+        net_ev: 6.38,
+        carry_roi_pct: 6.38,
+        hold_to_resolution: true,
+        time_to_resolution_days: 14,
+        yes_bid: 0.93,
+        yes_ask: 0.94,
+        spread: 0.01,
+        edge_abs: 0.06,
+        spread_edge_ratio: 0.167,
+        price_source: "ws" as const,
+      },
+      status: "proposed" as const,
+    };
+    const { server, port } = await startServer([carryPlan]);
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/plans`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as { plans: Array<{ ev_breakdown?: { mode?: string; carry_roi_pct?: number } }> };
+      const carryPlans = body.plans.filter((p) => p.ev_breakdown?.mode === "carry");
+      assert.ok(carryPlans.length >= 1, "at least one plan with ev_breakdown.mode=carry");
+      const one = carryPlans[0];
+      assert.ok(typeof one.ev_breakdown?.carry_roi_pct === "number", "carry plan has ev_breakdown.carry_roi_pct");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("GET /plans returns 200 with response contract and debug headers", async () => {
     const { server, port } = await startServer();
     try {

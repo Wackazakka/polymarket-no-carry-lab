@@ -109,6 +109,11 @@ function stablePlanId(marketId: string, tokenId: string, outcome: "NO" | "YES"):
   return createHash("sha1").update(key, "utf8").digest("hex");
 }
 
+/** Plan id by market + outcome + ev_breakdown.mode so capture and carry never collide. */
+function planIdFromMode(marketId: string, outcome: "NO" | "YES", mode: string): string {
+  return createHash("sha1").update(`${marketId}:${outcome}:${mode}`, "utf8").digest("hex");
+}
+
 function main(): void {
   const config = loadConfig();
   console.log("[config] loaded from", getConfigPath());
@@ -429,7 +434,7 @@ function main(): void {
             }
           : fill;
 
-      const planId = stablePlanId(market.marketId, market.noTokenId!, "NO");
+      const planId = planIdFromMode(market.marketId, "NO", evMode);
       const planPayload: Omit<TradePlan, "plan_id" | "created_at" | "status"> = {
         market_id: market.marketId,
         condition_id: market.conditionId,
@@ -441,6 +446,7 @@ function main(): void {
         assumption_key: assumptionKey,
         window_key: windowKey,
         ev_breakdown: {
+          mode: evMode,
           net_ev: evResult.net_ev,
           tail_risk_cost: evResult.tail_risk_cost,
           tailByp: evResult.tailByp,
@@ -553,7 +559,7 @@ function main(): void {
           allow.decision === "ALLOW_REDUCED_SIZE" && allow.suggested_size != null
             ? allow.suggested_size
             : sizeUsdCarry;
-        const planId = stablePlanId(c.market.marketId, c.yesTokenId, "YES");
+        const planId = planIdFromMode(c.market.marketId, "YES", "carry");
         const carryPlanPayload = {
           plan_id: planId,
           market_id: c.market.marketId,
@@ -603,7 +609,7 @@ function main(): void {
     }
     setPlans(plansForApi, scanTsIso, { ev_mode: evMode, ...carryMeta });
     const storeCount = getPlans().count;
-    const proposedCount = proposedPlans.length;
+    const proposedCount = plansForApi.length;
     console.log(`[debug] plan_store_count=${storeCount} proposed_count=${proposedCount}`);
     if (storeCount !== proposedCount) {
       console.log(`[bug] proposed_count_mismatch plan_store_count=${storeCount} proposed_count=${proposedCount}`);
