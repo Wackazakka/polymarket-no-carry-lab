@@ -6,6 +6,7 @@ import assert from "node:assert";
 import { request } from "node:http";
 import { createControlApi } from "../ops/control_api";
 import { setPlans, getPlans } from "../control/plan_store";
+import { setBookForTest } from "../markets/orderbook_ws";
 
 function httpRequest(url: string, method: "GET" | "HEAD" = "GET"): Promise<{ statusCode: number; headers: Record<string, string>; body: string }> {
   return new Promise((resolve, reject) => {
@@ -301,6 +302,129 @@ describe("control API GET /book", () => {
         assert.ok(typeof body.no_token_id === "string");
         assert.ok("noBid" in body && "noAsk" in body && "spread" in body && "depthSummary" in body);
       }
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
+describe("control API GET /fill", () => {
+  it("GET /fill without no_token_id returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?side=buy&size_usd=100`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string };
+      assert.strictEqual(body.error, "no_token_id required");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill with unknown param returns 400 invalid_query", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=x&side=buy&size_usd=100&unknown=1`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string; details?: string[] };
+      assert.strictEqual(body.error, "invalid_query");
+      assert.ok(Array.isArray(body.details) && body.details.some((d) => d.includes("unknown")));
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill with invalid side returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=x&side=mid&size_usd=100`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string };
+      assert.strictEqual(body.error, "side must be buy or sell");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill with invalid size_usd returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=x&side=buy&size_usd=0`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string };
+      assert.strictEqual(body.error, "size_usd must be a positive number");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill with fake book (buy): avg_price and levels_used", async () => {
+    const tokenId = "fill-buy-test-123";
+    setBookForTest(
+      tokenId,
+      [{ price: 0.49, size: 1000 }],
+      [
+        { price: 0.5, size: 500 },
+        { price: 0.51, size: 500 },
+      ]
+    );
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=${tokenId}&side=buy&size_usd=100`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as {
+        no_token_id: string;
+        side: string;
+        size_usd: number;
+        top: { noBid: number; noAsk: number; spread: number };
+        filled_usd: number;
+        filled_shares: number;
+        avg_price: number;
+        levels_used: number;
+        slippage_pct: number;
+      };
+      assert.strictEqual(body.side, "buy");
+      assert.strictEqual(body.size_usd, 100);
+      assert.strictEqual(body.levels_used, 1, "fill at first ask level only for 100 USD at 0.50");
+      assert.ok(body.filled_shares > 0);
+      assert.ok(Math.abs(body.avg_price - 0.5) < 0.001);
+      assert.ok(body.filled_usd > 0 && body.filled_usd <= 100);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill with fake book (sell): avg_price and levels_used", async () => {
+    const tokenId = "fill-sell-test-456";
+    setBookForTest(
+      tokenId,
+      [
+        { price: 0.49, size: 500 },
+        { price: 0.48, size: 500 },
+      ],
+      [{ price: 0.5, size: 1000 }]
+    );
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=${tokenId}&side=sell&size_usd=100`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as {
+        no_token_id: string;
+        side: string;
+        size_usd: number;
+        top: { noBid: number; noAsk: number; spread: number };
+        filled_usd: number;
+        filled_shares: number;
+        avg_price: number;
+        levels_used: number;
+        slippage_pct: number;
+      };
+      assert.strictEqual(body.side, "sell");
+      assert.strictEqual(body.size_usd, 100);
+      assert.strictEqual(body.levels_used, 1, "sell fills at best bid 0.49 for target_shares = 100/0.49");
+      assert.ok(body.filled_shares > 0);
+      assert.ok(Math.abs(body.avg_price - 0.49) < 0.001);
+      assert.ok(body.filled_usd > 0);
     } finally {
       await closeServer(server);
     }

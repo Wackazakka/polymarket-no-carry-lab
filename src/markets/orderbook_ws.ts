@@ -176,6 +176,16 @@ export function getBooksDebug(): { hasKey: (tokenId: string | null) => boolean; 
   };
 }
 
+/** Test-only: inject book state for a token. No-op when NODE_ENV !== "test". */
+export function setBookForTest(tokenId: string, bids: OrderLevel[], asks: OrderLevel[]): void {
+  if (process.env.NODE_ENV !== "test") return;
+  const key = normalizeBookKey(tokenId);
+  if (!key) return;
+  const bidsSorted = bids.slice().sort((a, b) => b.price - a.price);
+  const asksSorted = asks.slice().sort((a, b) => a.price - b.price);
+  books.set(key, { bids: bidsSorted, asks: asksSorted, timestamp: Date.now() });
+}
+
 export interface OrderbookUpdate {
   assetId: string;
   marketId: string;

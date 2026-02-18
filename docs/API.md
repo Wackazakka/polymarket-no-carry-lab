@@ -107,6 +107,53 @@ Example: `curl -s "http://localhost:3344/book?no_token_id=12345"`
 
 ---
 
+## GET /fill
+
+Simulated fill against the in-memory orderbook for a given NO token: buy (hit asks) or sell (hit bids) for a target `size_usd`. Returns fill summary with avg price, levels used, and slippage.
+
+### Query parameters
+
+| Param          | Type   | Description |
+|----------------|--------|-------------|
+| `no_token_id`  | string | **Required.** NO token id. Trimmed; missing or blank → 400. |
+| `side`         | string | **Required.** `buy` or `sell`. |
+| `size_usd`     | number | **Required.** Target size in USD. Must be > 0; clamped to max 10,000. |
+
+- Only `no_token_id`, `side`, and `size_usd` are allowed. Any other query param → **400** with `invalid_query` and `details`.
+
+### Response (200)
+
+```json
+{
+  "no_token_id": "12345",
+  "side": "buy",
+  "size_usd": 100,
+  "top": { "noBid": 0.49, "noAsk": 0.50, "spread": 0.01 },
+  "filled_usd": 100,
+  "filled_shares": 200.0,
+  "avg_price": 0.50,
+  "levels_used": 3,
+  "slippage_pct": 0.12
+}
+```
+
+- **top** — Top-of-book at request time (noBid, noAsk, spread).
+- **filled_usd** — USD spent (buy) or proceeds (sell).
+- **filled_shares** — Shares filled (may be less than full size if book is thin).
+- **avg_price** — filled_usd / filled_shares.
+- **slippage_pct** — Buy: (avg_price - topAsk) / topAsk × 100; sell: (topBid - avg_price) / topBid × 100.
+
+Partial fills still return 200 with filled_usd &lt; size_usd as applicable.
+
+### Error responses
+
+- **400** — Missing or invalid query: `no_token_id required`, `side must be buy or sell`, `size_usd must be a positive number`, or `invalid_query` with `details`.
+- **404** — No book for that token: `{ "error": "book_not_found" }`.
+
+Example: `curl -s "http://localhost:3344/fill?no_token_id=12345&side=buy&size_usd=100"`
+
+---
+
 ### Examples (GET /plans)
 
 ```bash

@@ -12,11 +12,66 @@ import { getPlans as getQueuedPlans, queueLength, clearQueue } from "./plan_queu
 import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
-import { getTopOfBook, normalizeBookKey } from "../markets/orderbook_ws";
+import { getTopOfBook, getDepth, normalizeBookKey } from "../markets/orderbook_ws";
+import type { OrderLevel } from "../types";
 
 const DEFAULT_PLANS_LIMIT = 50;
 const MAX_PLANS_LIMIT = 200;
 const ALLOWED_PLANS_PARAMS = ["limit", "offset", "min_ev", "category", "assumption_key"] as const;
+
+const MAX_FILL_SIZE_USD = 10_000;
+
+function simulateFillFromBook(
+  side: "buy" | "sell",
+  sizeUsd: number,
+  topBid: number | null,
+  topAsk: number | null,
+  askLevels: OrderLevel[],
+  bidLevels: OrderLevel[]
+): { filled_usd: number; filled_shares: number; avg_price: number; levels_used: number; slippage_pct: number } {
+  let filled_usd = 0;
+  let filled_shares = 0;
+  let levels_used = 0;
+
+  if (side === "buy") {
+    let remaining_usd = sizeUsd;
+    for (const level of askLevels) {
+      if (remaining_usd <= 0) break;
+      const take_shares = Math.min(level.size, remaining_usd / level.price);
+      if (take_shares <= 0) continue;
+      const cost = take_shares * level.price;
+      filled_usd += cost;
+      filled_shares += take_shares;
+      remaining_usd -= cost;
+      levels_used += 1;
+    }
+  } else {
+    if (topBid == null || topBid <= 0) {
+      return { filled_usd: 0, filled_shares: 0, avg_price: 0, levels_used: 0, slippage_pct: 0 };
+    }
+    const target_shares = sizeUsd / topBid;
+    let remaining_shares = target_shares;
+    for (const level of bidLevels) {
+      if (remaining_shares <= 0) break;
+      const take_shares = Math.min(level.size, remaining_shares);
+      if (take_shares <= 0) continue;
+      filled_usd += take_shares * level.price;
+      filled_shares += take_shares;
+      remaining_shares -= take_shares;
+      levels_used += 1;
+    }
+  }
+
+  const avg_price = filled_shares > 0 ? filled_usd / filled_shares : 0;
+  let slippage_pct = 0;
+  if (side === "buy" && topAsk != null && topAsk > 0) {
+    slippage_pct = ((avg_price - topAsk) / topAsk) * 100;
+  } else if (side === "sell" && topBid != null && topBid > 0) {
+    slippage_pct = ((topBid - avg_price) / topBid) * 100;
+  }
+
+  return { filled_usd, filled_shares, avg_price, levels_used, slippage_pct };
+}
 
 function normalizeStr(v: string | null | undefined): string | undefined {
   if (v == null) return undefined;
@@ -204,6 +259,66 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
         const payload = { count_total, count_returned, limit: q.limit, offset: q.offset, plans: out };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
+        return;
+      }
+
+      if (method === "GET" && path === "/fill") {
+        const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+        const allowedFillParams = ["no_token_id", "side", "size_usd"] as const;
+        for (const key of params.keys()) {
+          if (!allowedFillParams.includes(key as (typeof allowedFillParams)[number])) {
+            sendJson(res, 400, { error: "invalid_query", details: [`unknown query param: ${key}`] });
+            return;
+          }
+        }
+        const noTokenIdRaw = params.get("no_token_id");
+        const noTokenId = noTokenIdRaw != null ? String(noTokenIdRaw).trim() : "";
+        if (!noTokenId) {
+          sendJson(res, 400, { error: "no_token_id required" });
+          return;
+        }
+        const sideRaw = normalizeStr(params.get("side"));
+        if (sideRaw !== "buy" && sideRaw !== "sell") {
+          sendJson(res, 400, { error: "side must be buy or sell" });
+          return;
+        }
+        const side = sideRaw as "buy" | "sell";
+        const sizeUsdRaw = normalizeNum(params.get("size_usd"));
+        if (sizeUsdRaw === undefined || sizeUsdRaw <= 0) {
+          sendJson(res, 400, { error: "size_usd must be a positive number" });
+          return;
+        }
+        const sizeUsd = Math.min(sizeUsdRaw, MAX_FILL_SIZE_USD);
+
+        const top = getTopOfBook(noTokenId, 5);
+        if (top == null) {
+          sendJson(res, 404, { error: "book_not_found" });
+          return;
+        }
+        const askLevels = getDepth(noTokenId, "asks");
+        const bidLevels = getDepth(noTokenId, "bids");
+        const sim = simulateFillFromBook(
+          side,
+          sizeUsd,
+          top.noBid,
+          top.noAsk,
+          askLevels,
+          bidLevels
+        );
+        const key = normalizeBookKey(noTokenId) || noTokenId;
+        res.setHeader("X-Build-Id", getBuildId());
+        const payload = {
+          no_token_id: key,
+          side,
+          size_usd: sizeUsd,
+          top: { noBid: top.noBid, noAsk: top.noAsk, spread: top.spread },
+          filled_usd: sim.filled_usd,
+          filled_shares: sim.filled_shares,
+          avg_price: sim.avg_price,
+          levels_used: sim.levels_used,
+          slippage_pct: sim.slippage_pct,
+        };
+        sendJson(res, 200, payload);
         return;
       }
 
