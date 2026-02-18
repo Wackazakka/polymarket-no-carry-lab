@@ -24,6 +24,7 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 | `category`    | string | —       | Exact match on `category`. Empty/whitespace = not applied. |
 | `assumption_key` | string | —    | Exact match on `assumption_key`. Empty/whitespace = not applied. |
 | `debug`       | —      | 0       | If `1` or `true`: return full `ev_breakdown` (e.g. `mode`, `carry_roi_pct`, pricing). Default: `ev_breakdown` is stripped to `net_ev`, `tail_risk_cost`, `tailByp`, `tail_bypass_reason` only. |
+| `gate`        | 0 \| 1  | 1       | When `1` (default): apply outcome/mode allowlist (NO:capture, NO:baseline, YES:carry, plus legacy plans without outcome/mode). When `0`: bypass allowlist and return all plans from the store (other filters and debug stripping unchanged). Useful for debug/inspeksjon. |
 
 - All string params are trimmed; missing or empty-after-trim is treated as “not provided”.
 - Unknown query params cause **400** with `invalid_query` and a `details` array.

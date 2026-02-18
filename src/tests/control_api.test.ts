@@ -153,6 +153,60 @@ describe("control API GET /plans", () => {
     }
   });
 
+  it("GET /plans?debug=1&gate=0 and gate=1 both return NO:capture + YES:carry when seeded", async () => {
+    const noCapturePlan = {
+      plan_id: "no-capture-id",
+      created_at: new Date().toISOString(),
+      market_id: "m-no",
+      condition_id: "c-no",
+      no_token_id: "111",
+      outcome: "NO" as const,
+      sizeUsd: 100,
+      limit_price: 0.5,
+      category: "Politics",
+      assumption_key: "ak-no",
+      window_key: "W_capture",
+      ev_breakdown: { mode: "capture" as const, net_ev: 2 },
+      status: "proposed" as const,
+    };
+    const yesCarryPlan = {
+      plan_id: "yes-carry-id",
+      created_at: new Date().toISOString(),
+      market_id: "m-yes",
+      condition_id: "c-yes",
+      no_token_id: "222",
+      outcome: "YES" as const,
+      sizeUsd: 100,
+      limit_price: 0.94,
+      category: "Politics",
+      assumption_key: "ak-yes",
+      window_key: "W_carry_0_30D",
+      ev_breakdown: { mode: "carry" as const, net_ev: 6.38, carry_roi_pct: 6.38 },
+      status: "proposed" as const,
+    };
+    const seeded = [noCapturePlan, yesCarryPlan];
+    const { server, port } = await startServer(seeded);
+    try {
+      const res0 = await httpGet(`http://127.0.0.1:${port}/plans?debug=1&gate=0`);
+      assert.strictEqual(res0.statusCode, 200);
+      const body0 = JSON.parse(res0.body) as { count_total: number; plans: Array<{ outcome?: string; ev_breakdown?: { mode?: string } }> };
+      assert.strictEqual(body0.count_total, 2, "gate=0 returns both plans");
+      assert.strictEqual(body0.plans.length, 2);
+      const modes0 = body0.plans.map((p) => p.ev_breakdown?.mode).sort();
+      assert.deepStrictEqual(modes0, ["capture", "carry"]);
+
+      const res1 = await httpGet(`http://127.0.0.1:${port}/plans?debug=1&gate=1`);
+      assert.strictEqual(res1.statusCode, 200);
+      const body1 = JSON.parse(res1.body) as { count_total: number; plans: Array<{ outcome?: string; ev_breakdown?: { mode?: string } }> };
+      assert.strictEqual(body1.count_total, 2, "gate=1 allowlist still returns NO:capture and YES:carry");
+      assert.strictEqual(body1.plans.length, 2);
+      const modes1 = body1.plans.map((p) => p.ev_breakdown?.mode).sort();
+      assert.deepStrictEqual(modes1, ["capture", "carry"]);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
   it("GET /plans returns 200 with response contract and debug headers", async () => {
     const { server, port } = await startServer();
     try {

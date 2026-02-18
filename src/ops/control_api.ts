@@ -25,7 +25,7 @@ export interface ControlApiOptions {
 
 const DEFAULT_PLANS_LIMIT = 50;
 const MAX_PLANS_LIMIT = 200;
-const ALLOWED_PLANS_PARAMS = ["limit", "offset", "min_ev", "category", "assumption_key", "debug"] as const;
+const ALLOWED_PLANS_PARAMS = ["limit", "offset", "min_ev", "category", "assumption_key", "debug", "gate"] as const;
 
 const EV_BREAKDOWN_STRIPPED_KEYS = ["net_ev", "tail_risk_cost", "tailByp", "tail_bypass_reason"] as const;
 
@@ -134,6 +134,9 @@ function validatePlansQuery(params: URLSearchParams): { ok: true; query: PlansQu
   const debugRaw = params.get("debug");
   const debug = debugRaw === "1" || debugRaw === "true";
 
+  const gateRaw = params.get("gate");
+  const gate = gateRaw === "0" ? 0 : 1;
+
   if (details.length > 0) return { ok: false, details };
 
   return {
@@ -145,6 +148,7 @@ function validatePlansQuery(params: URLSearchParams): { ok: true; query: PlansQu
       category,
       assumptionKey,
       debug,
+      gate,
     },
   };
 }
@@ -156,6 +160,7 @@ interface PlansQuery {
   category: string | undefined;
   assumptionKey: string | undefined;
   debug: boolean;
+  gate: 0 | 1;
 }
 
 function getBuildId(): string {
@@ -251,7 +256,38 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
         const assumptionKey = q.assumptionKey ?? "";
 
         type PlanRow = (typeof p.plans)[number];
+        function countOutcomesModes(plans: PlanRow[]): string {
+          const counts: Record<string, number> = {};
+          for (const row of plans) {
+            const outcome = (row as { outcome?: string }).outcome ?? "MISSING";
+            const mode = (row as { ev_breakdown?: { mode?: string } }).ev_breakdown?.mode ?? "MISSING";
+            const key = `${outcome}:${mode}`;
+            counts[key] = (counts[key] ?? 0) + 1;
+          }
+          const parts = Object.entries(counts)
+            .sort((a, b) => a[0].localeCompare(b[0]))
+            .map(([k, n]) => `${k}=${n}`);
+          return parts.join(" ");
+        }
+
+        console.log(`[plans] pre-gate total=${p.plans.length} outcomes=... modes=... (${countOutcomesModes(p.plans)})`);
+
         let filtered: PlanRow[] = p.plans;
+        if (q.gate === 1) {
+          filtered = p.plans.filter((row) => {
+            const outcome = (row as { outcome?: string }).outcome ?? "MISSING";
+            const mode = (row as { ev_breakdown?: { mode?: string } }).ev_breakdown?.mode ?? "MISSING";
+            const allowed =
+              (outcome === "NO" && (mode === "capture" || mode === "baseline")) ||
+              (outcome === "YES" && mode === "carry") ||
+              outcome === "MISSING" ||
+              mode === "MISSING";
+            return allowed;
+          });
+        }
+
+        console.log(`[plans] post-gate total=${filtered.length} outcomes=... modes=... (${countOutcomesModes(filtered)})`);
+
         if (hasMinEv) {
           filtered = filtered.filter((row) => {
             const netEv = (row as { ev_breakdown?: { net_ev?: number } }).ev_breakdown?.net_ev;
