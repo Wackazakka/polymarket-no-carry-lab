@@ -209,6 +209,7 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
           queue_length: queueLength(),
           lastScanTs: p.lastScanTs,
           proposedCountLastScan: p.count,
+          meta: p.meta ?? undefined,
         });
         return;
       }

@@ -132,6 +132,11 @@ function findConfigPath(): string {
   );
 }
 
+/** Returns the path to the config file that would be loaded (first existing from project root or src/config). */
+export function getConfigPath(): string {
+  return findConfigPath();
+}
+
 export function loadConfig(): Config {
   const configPath = findConfigPath();
   const raw = readFileSync(configPath, "utf-8");

@@ -3,7 +3,7 @@
  * No private keys, no wallets, no signing, no order placement.
  */
 
-import { loadConfig } from "./config/load_config";
+import { loadConfig, getConfigPath } from "./config/load_config";
 import { enforceNoLiveTrading } from "./safety/ban_live_trading";
 import { fetchActiveMarkets } from "./market_fetcher";
 import {
@@ -80,6 +80,22 @@ function shouldRunDailyReport(config: { reporting: { daily_report_hour_local: nu
   return nowInOsloHour() === config.reporting.daily_report_hour_local;
 }
 
+/** Effective carry config (defaults applied) for logging and /status. */
+function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: number; roiMaxPct?: number; maxSpread?: number; maxDays?: number; spreadEdgeMaxRatio?: number; spreadEdgeMinAbs?: number; allowSyntheticAsk?: boolean; allowHttpFallback?: boolean } | null }): Record<string, unknown> {
+  const c = config.carry ?? { enabled: false };
+  return {
+    enabled: c.enabled ?? true,
+    roiMinPct: c.roiMinPct ?? 6,
+    roiMaxPct: c.roiMaxPct ?? 7,
+    maxSpread: c.maxSpread ?? 0.02,
+    maxDays: c.maxDays ?? 30,
+    spreadEdgeMaxRatio: c.spreadEdgeMaxRatio ?? 2.0,
+    spreadEdgeMinAbs: c.spreadEdgeMinAbs ?? 0.0,
+    allowSyntheticAsk: c.allowSyntheticAsk ?? false,
+    allowHttpFallback: c.allowHttpFallback ?? true,
+  };
+}
+
 /** Strip to digits only; for API payload (e.g. no_token_id in /plans). */
 function normalizeTokenId(x: unknown): string {
   if (typeof x !== "string") return "";
@@ -95,6 +111,8 @@ function stablePlanId(marketId: string, tokenId: string, outcome: "NO" | "YES"):
 
 function main(): void {
   const config = loadConfig();
+  console.log("[config] loaded from", getConfigPath());
+  console.log("[carry cfg]", JSON.stringify(effectiveCarryCfg(config)));
   enforceNoLiveTrading(config);
 
   const dataDir = initStore(config);
@@ -215,6 +233,7 @@ function main(): void {
       ? `capture band [${filterConfig.capture_min_no_ask}, ${filterConfig.capture_max_no_ask}]`
       : `min_no_price=${filterConfig.min_no_price}`;
     console.log("[scan] ev_mode=" + evMode + " NO-ask threshold: " + noAskDesc);
+    console.log("[carry cfg]", JSON.stringify(effectiveCarryCfg(config)));
     if (diagnosticLoose) {
       console.log("[diagnostic] Loose filters: " + noAskDesc + " max_spread=0.05 min_liquidity_usd=100 max_time_to_resolution_hours=" + filterConfig.max_time_to_resolution_hours);
     }
@@ -458,7 +477,8 @@ function main(): void {
 
     /** Carry (YES) plans: same store shape, outcome YES, no_token_id = yes token. */
     const carryConfig = config.carry ?? { enabled: false };
-    let carryMeta: Record<string, unknown> = {};
+    const carryCfgForMeta = effectiveCarryCfg(config);
+    let carryMeta: Record<string, unknown> = { carry_cfg: carryCfgForMeta };
     if (carryConfig.enabled) {
       const { candidates: carryCandidates, carryDebug, sampleNoBookTokenIds } = await selectCarryCandidates(
         markets,
@@ -484,7 +504,7 @@ function main(): void {
         },
         now
       );
-      carryMeta = { carry_debug: carryDebug };
+      carryMeta = { carry_cfg: carryCfgForMeta, carry_debug: carryDebug };
       console.log(
         "[carry]",
         "passed=" + carryDebug.passed,
