@@ -181,6 +181,7 @@ function main(): void {
 
   async function runScan(): Promise<void> {
     console.log(`[scan] Polling markets at ${new Date().toISOString()}`);
+    console.log("\n================ SCAN START ================");
     const markets = await fetchActiveMarkets(config.api.gammaBaseUrl, {
       limit: 100,
       maxPages: 3,
@@ -607,10 +608,24 @@ function main(): void {
     if (plansForApi.length > 0 && /[^0-9]/.test(plansForApi[0].no_token_id)) {
       console.warn("[bug] no_token_id not normalized:", plansForApi[0].no_token_id);
     }
-    const carryCount = plansForApi.filter(
+    const carryPlans = plansForApi.filter(
       (p) => (p as { ev_breakdown?: { mode?: string } }).ev_breakdown?.mode === "carry"
-    ).length;
-    console.log(`[debug] plansForApi size=${plansForApi.length} carry=${carryCount}`);
+    );
+    console.log("\n================ CARRY DEBUG ================");
+    console.log(`[carry] total plansForApi : ${plansForApi.length}`);
+    console.log(`[carry] carry plans       : ${carryPlans.length}`);
+    if (carryPlans.length > 0) {
+      console.log("[carry] sample:");
+      carryPlans.slice(0, 3).forEach((p, i) => {
+        const ev = (p as { market_id?: string; ev_breakdown?: { carry_roi_pct?: number } });
+        console.log(
+          `  ${i + 1}) market=${ev.market_id} roi=${ev.ev_breakdown?.carry_roi_pct}`
+        );
+      });
+    } else {
+      console.log("[carry] ⚠️ NO CARRY PLANS GENERATED");
+    }
+    console.log("============================================\n");
     setPlans(plansForApi, scanTsIso, { ev_mode: evMode, ...carryMeta });
     const storeCount = getPlans().count;
     const proposedCount = plansForApi.length;
