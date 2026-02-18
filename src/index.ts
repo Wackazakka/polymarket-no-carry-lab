@@ -36,6 +36,7 @@ import {
   type TradeProposalForRisk,
   type AllowTradeResult,
 } from "./risk/risk_engine";
+import { selectCarryCandidates } from "./strategy/carry_yes";
 import { initStore } from "./state/store";
 import { initPositionsDb, listPositions, insertPosition } from "./state/positions";
 import { initLedgerDb, appendLedger } from "./state/ledger";
@@ -85,9 +86,9 @@ function normalizeTokenId(x: unknown): string {
   return x.replace(/[^0-9]/g, "");
 }
 
-/** Stable plan identity for upsert: same market + no_token + outcome => same plan_id. */
-function stablePlanId(marketId: string, noTokenId: string, outcome: "NO"): string {
-  const normalized = normalizeTokenId(noTokenId) || String(noTokenId).trim();
+/** Stable plan identity for upsert: same market + token + outcome => same plan_id. */
+function stablePlanId(marketId: string, tokenId: string, outcome: "NO" | "YES"): string {
+  const normalized = normalizeTokenId(tokenId) || String(tokenId).trim();
   const key = `${marketId}|${normalized}|${outcome}`;
   return createHash("sha1").update(key, "utf8").digest("hex");
 }
@@ -171,13 +172,19 @@ function main(): void {
     }
 
     const withNoToken = markets.filter((m) => m.noTokenId);
+    const withYesToken = markets.filter((m) => m.yesTokenId);
     const subscribedCap = config.ws?.max_assets_subscribed ?? 200;
-    const tokenIds = [...new Set(withNoToken.map((m) => normalizeBookKey(m.noTokenId!)).filter((k) => k.length >= 10).slice(0, subscribedCap))];
+    const noIds = withNoToken.map((m) => normalizeBookKey(m.noTokenId!)).filter((k) => k.length >= 10);
+    const yesIds = withYesToken.map((m) => normalizeBookKey(m.yesTokenId!)).filter((k) => k.length >= 10);
+    const tokenIds = [...new Set([...noIds, ...yesIds])].slice(0, subscribedCap);
     await fetchOrderbookSnapshot(config.api.clobRestBaseUrl, tokenIds);
 
     const tokenToMarket = new Map<string, NormalizedMarket>();
     for (const m of withNoToken) {
-      if (m.noTokenId) tokenToMarket.set(m.noTokenId, m);
+      if (m.noTokenId) tokenToMarket.set(normalizeBookKey(m.noTokenId), m);
+    }
+    for (const m of withYesToken) {
+      if (m.yesTokenId) tokenToMarket.set(normalizeBookKey(m.yesTokenId), m);
     }
 
     candidatesScanned += markets.length;
@@ -442,16 +449,97 @@ function main(): void {
     /** Report count = length of the real proposed array. */
     tradesProposed = proposedPlans.length;
     /** 1:1 JSON-safe copy for plan_store (same length as proposedPlans). created_at/updated_at set by store on upsert. */
-    const plansForApi = proposedPlans.map((p) => ({
+    let plansForApi = proposedPlans.map((p) => ({
       plan_id: p.planId,
       ...p.planPayload,
       no_token_id: normalizeTokenId(p.planPayload.no_token_id),
       status: "proposed" as const,
     }));
+
+    /** Carry (YES) plans: same store shape, outcome YES, no_token_id = yes token. */
+    const carryConfig = config.carry ?? { enabled: false };
+    let carryMeta: Record<string, unknown> = {};
+    if (carryConfig.enabled) {
+      const { candidates: carryCandidates, carryDebug } = selectCarryCandidates(
+        markets,
+        (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
+        {
+          enabled: true,
+          maxDays: carryConfig.maxDays ?? 30,
+          roiMinPct: carryConfig.roiMinPct ?? 6,
+          roiMaxPct: carryConfig.roiMaxPct ?? 7,
+          maxSpread: carryConfig.maxSpread ?? 0.02,
+          minAskLiqUsd: carryConfig.minAskLiqUsd ?? 500,
+          sizeUsd: carryConfig.sizeUsd,
+          bankroll_fraction: carryConfig.bankroll_fraction,
+          allowCategories: carryConfig.allowCategories ?? [],
+          allowKeywords: carryConfig.allowKeywords ?? [],
+        },
+        now
+      );
+      carryMeta = { carry_debug: carryDebug };
+      console.log(
+        "[carry]",
+        "passed=" + carryDebug.passed,
+        "missing_yes=" + carryDebug.missing_yes_token_id,
+        "no_end_time=" + carryDebug.missing_end_time,
+        "beyond_max_days=" + carryDebug.beyond_max_days,
+        "procedural=" + carryDebug.procedural_rejected,
+        "no_book=" + carryDebug.no_book_or_ask,
+        "roi_band=" + carryDebug.roi_out_of_band,
+        "spread=" + carryDebug.spread_too_high,
+        "ask_liq=" + carryDebug.ask_liq_too_low
+      );
+      const sizeUsdCarry = carryConfig.sizeUsd ?? 100;
+      for (const c of carryCandidates) {
+        const category = inferCategory(c.market);
+        const resolutionWindowBucket = computeResolutionWindowBucket(c.market.resolutionTime, config);
+        const riskProposal: TradeProposalForRisk = {
+          marketId: c.market.marketId,
+          conditionId: c.market.conditionId,
+          sizeUsd: sizeUsdCarry,
+          category,
+          assumptionGroup: c.assumption_key,
+          resolutionWindowBucket,
+          assumptionKey: c.assumption_key,
+          windowKey: c.window_key,
+        };
+        const allow = allowTrade(riskProposal, riskState, config);
+        if (allow.decision === "BLOCK") continue;
+        const sizeToOpen =
+          allow.decision === "ALLOW_REDUCED_SIZE" && allow.suggested_size != null
+            ? allow.suggested_size
+            : sizeUsdCarry;
+        const planId = stablePlanId(c.market.marketId, c.yesTokenId, "YES");
+        const carryPlanPayload = {
+          plan_id: planId,
+          market_id: c.market.marketId,
+          condition_id: c.market.conditionId,
+          no_token_id: normalizeTokenId(c.yesTokenId),
+          outcome: "YES" as const,
+          sizeUsd: sizeToOpen,
+          limit_price: c.yesAsk,
+          category,
+          assumption_key: c.assumption_key,
+          window_key: c.window_key,
+          ev_breakdown: {
+            net_ev: c.carry_roi_pct,
+            mode: "carry",
+            carry_roi_pct: c.carry_roi_pct,
+            hold_to_resolution: true,
+            time_to_resolution_days: c.time_to_resolution_days,
+          },
+          headroom: allow.headroom,
+          status: "proposed" as const,
+        };
+        plansForApi.push(carryPlanPayload);
+      }
+    }
+
     if (plansForApi.length > 0 && /[^0-9]/.test(plansForApi[0].no_token_id)) {
       console.warn("[bug] no_token_id not normalized:", plansForApi[0].no_token_id);
     }
-    setPlans(plansForApi, scanTsIso, { ev_mode: evMode });
+    setPlans(plansForApi, scanTsIso, { ev_mode: evMode, ...carryMeta });
     const storeCount = getPlans().count;
     const proposedCount = proposedPlans.length;
     console.log(`[debug] plan_store_count=${storeCount} proposed_count=${proposedCount}`);
@@ -611,7 +699,9 @@ function main(): void {
     await runScan().catch((e) => console.error("[startup]", e));
     const marketsForWs = await fetchActiveMarkets(config.api.gammaBaseUrl, { limit: 20, maxPages: 1 }).catch(() => []);
     const wsSubscribedCap = config.ws?.max_assets_subscribed ?? 200;
-    const tokenIdsRaw = [...new Set(marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!).slice(0, wsSubscribedCap))];
+    const noTokenIds = (marketsForWs.filter((m) => m.noTokenId).map((m) => m.noTokenId!) ?? []) as string[];
+    const yesTokenIds = (marketsForWs.filter((m) => m.yesTokenId).map((m) => m.yesTokenId!) ?? []) as string[];
+    const tokenIdsRaw = [...new Set([...noTokenIds, ...yesTokenIds])].slice(0, wsSubscribedCap);
     const tokenIdsForWs = tokenIdsRaw.map(sanitizeTokenId).filter((x): x is string => x != null);
     console.log("[orderbook_ws] [diagnostic] tokenIds raw count:", tokenIdsRaw.length, "sanitized count:", tokenIdsForWs.length);
     console.log("[orderbook_ws] [diagnostic] Subscribing tokenIds sample (sanitized):", tokenIdsForWs.slice(0, 5));
