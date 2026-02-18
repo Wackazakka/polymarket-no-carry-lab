@@ -607,6 +607,10 @@ function main(): void {
     if (plansForApi.length > 0 && /[^0-9]/.test(plansForApi[0].no_token_id)) {
       console.warn("[bug] no_token_id not normalized:", plansForApi[0].no_token_id);
     }
+    const carryCount = plansForApi.filter(
+      (p) => (p as { ev_breakdown?: { mode?: string } }).ev_breakdown?.mode === "carry"
+    ).length;
+    console.log(`[debug] plansForApi size=${plansForApi.length} carry=${carryCount}`);
     setPlans(plansForApi, scanTsIso, { ev_mode: evMode, ...carryMeta });
     const storeCount = getPlans().count;
     const proposedCount = plansForApi.length;
