@@ -4,7 +4,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import { request } from "node:http";
-import { createControlApi } from "../ops/control_api";
+import { createControlApi, type ControlApiOptions } from "../ops/control_api";
 import { setPlans, getPlans } from "../control/plan_store";
 import { setBookForTest } from "../markets/orderbook_ws";
 
@@ -34,13 +34,13 @@ function httpGet(url: string): Promise<{ statusCode: number; headers: Record<str
   return httpRequest(url, "GET");
 }
 
-function startServer(plans?: unknown[]): Promise<{ server: ReturnType<typeof createControlApi>; port: number }> {
+function startServer(plans?: unknown[], apiOptions?: ControlApiOptions): Promise<{ server: ReturnType<typeof createControlApi>; port: number }> {
   const defaultPlans = [
     { plan_id: "test-1", created_at: new Date().toISOString(), market_id: "m1", category: "Politics", assumption_key: "ak1", ev_breakdown: { net_ev: 10 }, status: "proposed" as const },
     { plan_id: "test-2", created_at: new Date().toISOString(), market_id: "m2", category: "uncategorized", assumption_key: "ak2", ev_breakdown: { net_ev: 5 }, status: "proposed" as const },
   ];
   setPlans(plans ?? defaultPlans, new Date().toISOString(), {});
-  const server = createControlApi(0, { confirmHandler: async () => null });
+  const server = createControlApi(0, { confirmHandler: async () => null }, apiOptions);
   return new Promise((resolve) => {
     if (server.listening) {
       const addr = server.address() as { port: number };
@@ -306,6 +306,31 @@ describe("control API GET /book", () => {
       await closeServer(server);
     }
   });
+
+  it("GET /book returns price_source http when WS missing and stub HTTP returns bid/ask", async () => {
+    const fetchStub: ControlApiOptions["fetchTopOfBookHttp"] = async (tokenId) =>
+      tokenId === "999" ? { noBid: 0.93, noAsk: 0.94, spread: 0.01 } : null;
+    const { server, port } = await startServer(undefined, { fetchTopOfBookHttp: fetchStub });
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/book?no_token_id=999`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as {
+        no_token_id: string;
+        noBid: number | null;
+        noAsk: number | null;
+        spread: number | null;
+        price_source: string;
+        http_fallback_used: boolean;
+      };
+      assert.strictEqual(body.price_source, "http");
+      assert.strictEqual(body.http_fallback_used, true);
+      assert.strictEqual(body.no_token_id, "999");
+      assert.ok(Math.abs((body.noBid ?? 0) - 0.93) < 1e-9);
+      assert.ok(Math.abs((body.noAsk ?? 0) - 0.94) < 1e-9);
+    } finally {
+      await closeServer(server);
+    }
+  });
 });
 
 describe("control API GET /has-book", () => {
@@ -393,7 +418,7 @@ describe("control API GET /fill", () => {
   });
 
   it("GET /fill with fake book (buy): avg_price and levels_used", async () => {
-    const tokenId = "fill-buy-test-123";
+    const tokenId = "fill-buy-987654321";
     setBookForTest(
       tokenId,
       [{ price: 0.49, size: 1000 }],
@@ -429,7 +454,7 @@ describe("control API GET /fill", () => {
   });
 
   it("GET /fill with fake book (sell): avg_price and levels_used", async () => {
-    const tokenId = "fill-sell-test-456";
+    const tokenId = "fill-sell-987654322";
     setBookForTest(
       tokenId,
       [
@@ -459,6 +484,32 @@ describe("control API GET /fill", () => {
       assert.ok(body.filled_shares > 0);
       assert.ok(Math.abs(body.avg_price - 0.49) < 0.001);
       assert.ok(body.filled_usd > 0);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /fill works with HTTP fallback when WS missing and stub returns bid/ask", async () => {
+    const fetchStub: ControlApiOptions["fetchTopOfBookHttp"] = async (tokenId) =>
+      tokenId === "888" ? { noBid: 0.92, noAsk: 0.94, spread: 0.02 } : null;
+    const { server, port } = await startServer(undefined, { fetchTopOfBookHttp: fetchStub });
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/fill?no_token_id=888&side=buy&size_usd=100`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as {
+        no_token_id: string;
+        side: string;
+        avg_price: number;
+        levels_used: number;
+        slippage_pct: number;
+        price_source: string;
+        http_fallback_used: boolean;
+      };
+      assert.strictEqual(body.price_source, "http");
+      assert.strictEqual(body.http_fallback_used, true);
+      assert.strictEqual(body.levels_used, 1);
+      assert.strictEqual(body.slippage_pct, 0);
+      assert.ok(Math.abs(body.avg_price - 0.94) < 1e-9);
     } finally {
       await closeServer(server);
     }

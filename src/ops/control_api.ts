@@ -13,7 +13,15 @@ import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
 import { getTopOfBook, getDepth, getBooksDebug, normalizeBookKey } from "../markets/orderbook_ws";
+import { fetchTopOfBookHttp, type HttpTopOfBook } from "../markets/clob_http";
 import type { OrderLevel } from "../types";
+
+export type FetchTopOfBookHttpFn = (tokenId: string, baseUrl?: string) => Promise<HttpTopOfBook | null>;
+
+export interface ControlApiOptions {
+  clobRestBaseUrl?: string;
+  fetchTopOfBookHttp?: FetchTopOfBookHttpFn;
+}
 
 const DEFAULT_PLANS_LIMIT = 50;
 const MAX_PLANS_LIMIT = 200;
@@ -176,7 +184,15 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data));
 }
 
-export function createControlApi(port: number, handlers: ControlApiHandlers) {
+function getClobBaseUrl(options?: ControlApiOptions): string | undefined {
+  if (process.env.CLOB_HTTP_BASE && String(process.env.CLOB_HTTP_BASE).trim()) {
+    return String(process.env.CLOB_HTTP_BASE).trim();
+  }
+  return options?.clobRestBaseUrl;
+}
+
+export function createControlApi(port: number, handlers: ControlApiHandlers, options?: ControlApiOptions) {
+  const doFetchHttp = options?.fetchTopOfBookHttp ?? fetchTopOfBookHttp;
   const server = createHttpServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url ?? "/";
     const path = url.split("?")[0];
@@ -297,33 +313,68 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
         }
         const sizeUsd = Math.min(sizeUsdRaw, MAX_FILL_SIZE_USD);
 
-        const top = getTopOfBook(noTokenId, 5);
-        if (top == null) {
-          sendJson(res, 404, { error: "book_not_found" });
-          return;
-        }
-        const askLevels = getDepth(noTokenId, "asks");
-        const bidLevels = getDepth(noTokenId, "bids");
-        const sim = simulateFillFromBook(
-          side,
-          sizeUsd,
-          top.noBid,
-          top.noAsk,
-          askLevels,
-          bidLevels
-        );
         const key = normalizeBookKey(noTokenId) || noTokenId;
+        let top = getTopOfBook(noTokenId, 5);
+        let price_source: "ws" | "http" = "ws";
+        let http_fallback_used = false;
+        const wsMissing = top == null || (top.noBid == null && top.noAsk == null);
+        if (wsMissing) {
+          const httpTop = await doFetchHttp(key, getClobBaseUrl(options));
+          if (httpTop != null && (httpTop.noBid != null || httpTop.noAsk != null)) {
+            top = {
+              noBid: httpTop.noBid,
+              noAsk: httpTop.noAsk,
+              spread: httpTop.spread,
+              depthSummary: { bidLiquidityUsd: 0, askLiquidityUsd: 0, levels: 5 },
+            };
+            price_source = "http";
+            http_fallback_used = true;
+          } else {
+            sendJson(res, 404, { error: "book_not_found" });
+            return;
+          }
+        }
+
+        let sim: { filled_usd: number; filled_shares: number; avg_price: number; levels_used: number; slippage_pct: number };
+        if (http_fallback_used) {
+          const price = side === "buy" ? top!.noAsk : top!.noBid;
+          if (price == null || price <= 0) {
+            sendJson(res, 404, { error: "book_not_found" });
+            return;
+          }
+          const filled_shares = sizeUsd / price;
+          sim = {
+            filled_usd: sizeUsd,
+            filled_shares,
+            avg_price: price,
+            levels_used: 1,
+            slippage_pct: 0,
+          };
+        } else {
+          const askLevels = getDepth(noTokenId, "asks");
+          const bidLevels = getDepth(noTokenId, "bids");
+          sim = simulateFillFromBook(
+            side,
+            sizeUsd,
+            top!.noBid,
+            top!.noAsk,
+            askLevels,
+            bidLevels
+          );
+        }
         res.setHeader("X-Build-Id", getBuildId());
         const payload = {
           no_token_id: key,
           side,
           size_usd: sizeUsd,
-          top: { noBid: top.noBid, noAsk: top.noAsk, spread: top.spread },
+          top: { noBid: top!.noBid, noAsk: top!.noAsk, spread: top!.spread },
           filled_usd: sim.filled_usd,
           filled_shares: sim.filled_shares,
           avg_price: sim.avg_price,
           levels_used: sim.levels_used,
           slippage_pct: sim.slippage_pct,
+          price_source,
+          http_fallback_used,
         };
         sendJson(res, 200, payload);
         return;
@@ -395,12 +446,27 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
           sendJson(res, 400, { error: "no_token_id required" });
           return;
         }
-        const book = getTopOfBook(noTokenId, 5);
-        if (book == null) {
-          sendJson(res, 404, { error: "book_not_found" });
-          return;
-        }
         const key = normalizeBookKey(noTokenId) || noTokenId;
+        let book = getTopOfBook(noTokenId, 5);
+        let price_source: "ws" | "http" = "ws";
+        let http_fallback_used = false;
+        const wsMissing = book == null || (book.noBid == null && book.noAsk == null);
+        if (wsMissing) {
+          const httpTop = await doFetchHttp(key, getClobBaseUrl(options));
+          if (httpTop != null && (httpTop.noBid != null || httpTop.noAsk != null)) {
+            book = {
+              noBid: httpTop.noBid,
+              noAsk: httpTop.noAsk,
+              spread: httpTop.spread,
+              depthSummary: { bidLiquidityUsd: 0, askLiquidityUsd: 0, levels: 1 },
+            };
+            price_source = "http";
+            http_fallback_used = true;
+          } else {
+            sendJson(res, 404, { error: "book_not_found" });
+            return;
+          }
+        }
         res.setHeader("X-Build-Id", getBuildId());
         if (method === "HEAD") {
           res.writeHead(200, { "Content-Type": "application/json" });
@@ -409,10 +475,12 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
         }
         const payload = {
           no_token_id: key,
-          noBid: book.noBid,
-          noAsk: book.noAsk,
-          spread: book.spread,
-          depthSummary: book.depthSummary,
+          noBid: book!.noBid,
+          noAsk: book!.noAsk,
+          spread: book!.spread,
+          depthSummary: book!.depthSummary,
+          price_source,
+          http_fallback_used,
         };
         sendJson(res, 200, payload);
         return;
