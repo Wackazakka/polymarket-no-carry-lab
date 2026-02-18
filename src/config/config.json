@@ -60,8 +60,8 @@
   "carry": {
     "enabled": true,
     "maxDays": 60,
-    "roiMinPct": 3,
-    "roiMaxPct": 12,
+    "roiMinPct": 0,
+    "roiMaxPct": 200,
     "maxSpread": 0.20,
     "allowSyntheticAsk": true,
     "syntheticTick": 0.01,
