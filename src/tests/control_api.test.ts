@@ -72,7 +72,46 @@ describe("control API GET /status", () => {
 });
 
 describe("control API GET /plans", () => {
-  it("GET /plans returns at least one plan with ev_breakdown.mode=carry and carry_roi_pct when store has carry plan", async () => {
+  it("default GET /plans returns ev_breakdown stripped to net_ev, tail_risk_cost, tailByp, tail_bypass_reason only", async () => {
+    const planWithExtra = {
+      plan_id: "strip-test-id",
+      created_at: new Date().toISOString(),
+      market_id: "m1",
+      condition_id: "c1",
+      no_token_id: "111",
+      outcome: "YES" as const,
+      sizeUsd: 100,
+      limit_price: 0.94,
+      category: "Politics",
+      assumption_key: "ak1",
+      window_key: "W_carry_0_30D",
+      ev_breakdown: {
+        mode: "carry" as const,
+        net_ev: 6.38,
+        carry_roi_pct: 6.38,
+        tail_risk_cost: 0,
+        tailByp: "N",
+        tail_bypass_reason: undefined,
+      },
+      status: "proposed" as const,
+    };
+    const { server, port } = await startServer([planWithExtra]);
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/plans`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as { plans: Array<{ ev_breakdown?: Record<string, unknown> }> };
+      assert.ok(body.plans.length >= 1);
+      const keys = Object.keys(body.plans[0].ev_breakdown ?? {});
+      const allowed = ["net_ev", "tail_risk_cost", "tailByp", "tail_bypass_reason"];
+      for (const k of keys) {
+        assert.ok(allowed.includes(k), `default response ev_breakdown must only have allowed keys, got: ${k}`);
+      }
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /plans?debug=1 returns full ev_breakdown including mode and carry_roi_pct when store has carry plan", async () => {
     const carryPlan = {
       plan_id: "carry-plan-test-id",
       created_at: new Date().toISOString(),
@@ -102,7 +141,7 @@ describe("control API GET /plans", () => {
     };
     const { server, port } = await startServer([carryPlan]);
     try {
-      const res = await httpGet(`http://127.0.0.1:${port}/plans`);
+      const res = await httpGet(`http://127.0.0.1:${port}/plans?debug=1`);
       assert.strictEqual(res.statusCode, 200);
       const body = JSON.parse(res.body) as { plans: Array<{ ev_breakdown?: { mode?: string; carry_roi_pct?: number } }> };
       const carryPlans = body.plans.filter((p) => p.ev_breakdown?.mode === "carry");

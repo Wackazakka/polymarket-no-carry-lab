@@ -25,7 +25,18 @@ export interface ControlApiOptions {
 
 const DEFAULT_PLANS_LIMIT = 50;
 const MAX_PLANS_LIMIT = 200;
-const ALLOWED_PLANS_PARAMS = ["limit", "offset", "min_ev", "category", "assumption_key"] as const;
+const ALLOWED_PLANS_PARAMS = ["limit", "offset", "min_ev", "category", "assumption_key", "debug"] as const;
+
+const EV_BREAKDOWN_STRIPPED_KEYS = ["net_ev", "tail_risk_cost", "tailByp", "tail_bypass_reason"] as const;
+
+function stripEvBreakdown(ev: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (ev == null || typeof ev !== "object") return null;
+  const out: Record<string, unknown> = {};
+  for (const k of EV_BREAKDOWN_STRIPPED_KEYS) {
+    if (k in ev) out[k] = ev[k];
+  }
+  return out;
+}
 
 const MAX_FILL_SIZE_USD = 10_000;
 
@@ -120,6 +131,9 @@ function validatePlansQuery(params: URLSearchParams): { ok: true; query: PlansQu
   const category = normalizeStr(params.get("category"));
   const assumptionKey = normalizeStr(params.get("assumption_key"));
 
+  const debugRaw = params.get("debug");
+  const debug = debugRaw === "1" || debugRaw === "true";
+
   if (details.length > 0) return { ok: false, details };
 
   return {
@@ -130,6 +144,7 @@ function validatePlansQuery(params: URLSearchParams): { ok: true; query: PlansQu
       minEv,
       category,
       assumptionKey,
+      debug,
     },
   };
 }
@@ -140,6 +155,7 @@ interface PlansQuery {
   minEv: number | null;
   category: string | undefined;
   assumptionKey: string | undefined;
+  debug: boolean;
 }
 
 function getBuildId(): string {
@@ -202,15 +218,19 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
       if (method === "GET" && path === "/status") {
         const state = getModeState();
         const p = getLastScanPlans();
+        const statusParams = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+        const debug = statusParams.get("debug") === "1" || statusParams.get("debug") === "true";
         res.setHeader("X-Build-Id", getBuildId());
-        sendJson(res, 200, {
+        const statusPayload: Record<string, unknown> = {
           mode: state.mode,
           panic: state.panic,
           queue_length: queueLength(),
           lastScanTs: p.lastScanTs,
           proposedCountLastScan: p.count,
           meta: p.meta ?? null,
-        });
+        };
+        if (debug && p.meta != null) statusPayload.meta_full = p.meta;
+        sendJson(res, 200, statusPayload);
         return;
       }
 
@@ -261,8 +281,16 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
         });
 
         const count_total = sorted.length;
-        const out = sorted.slice(q.offset, q.offset + q.limit);
-        const count_returned = out.length;
+        const slice = sorted.slice(q.offset, q.offset + q.limit);
+        const count_returned = slice.length;
+        // When debug=0/missing: strip ev_breakdown to net_ev, tail_risk_cost, tailByp, tail_bypass_reason. When debug=1: full ev_breakdown.
+        const out = q.debug
+          ? slice
+          : slice.map((row) => {
+              const r = row as Record<string, unknown>;
+              const ev = r.ev_breakdown as Record<string, unknown> | null | undefined;
+              return { ...r, ev_breakdown: stripEvBreakdown(ev) ?? r.ev_breakdown };
+            });
         // X-Plans-Total = unfiltered store count; X-Plans-Filtered = count_total (same as response count_total)
         res.setHeader("X-Plans-Total", String(p.plans.length));
         res.setHeader("X-Plans-Filtered", String(count_total));
@@ -272,7 +300,7 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
           res.end();
           return;
         }
-        // Return stored records as-is so updated_at (and created_at) flow through from plan_store.
+        // Return stored records (ev_breakdown stripped unless debug=1).
         const payload = {
           count_total,
           count_returned,

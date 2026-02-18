@@ -6,7 +6,7 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 
 ## GET /status
 
-**GET** returns mode, panic, queue length, last-scan timestamp, proposed count, and **meta** from the plan store (same source as /plans). The **meta** field is the last-scan metadata (e.g. `ev_mode`, `carry_cfg`, `carry_debug`) and may be `null` if no scan has run yet.
+**GET** returns mode, panic, queue length, last-scan timestamp, proposed count, and **meta** from the plan store (same source as /plans). The **meta** field is the last-scan metadata (e.g. `ev_mode`, `carry_cfg`, `carry_debug`) and may be `null` if no scan has run yet. Optional query **`debug=1`** (or `debug=true`): when set, the response also includes **`meta_full`** (same as `meta`) for convenience when inspecting full scan metadata.
 
 ---
 
@@ -23,6 +23,7 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 | `min_ev`      | number | —       | Only plans with `ev_breakdown.net_ev >= min_ev`. |
 | `category`    | string | —       | Exact match on `category`. Empty/whitespace = not applied. |
 | `assumption_key` | string | —    | Exact match on `assumption_key`. Empty/whitespace = not applied. |
+| `debug`       | —      | 0       | If `1` or `true`: return full `ev_breakdown` (e.g. `mode`, `carry_roi_pct`, pricing). Default: `ev_breakdown` is stripped to `net_ev`, `tail_risk_cost`, `tailByp`, `tail_bypass_reason` only. |
 
 - All string params are trimmed; missing or empty-after-trim is treated as “not provided”.
 - Unknown query params cause **400** with `invalid_query` and a `details` array.
