@@ -59,10 +59,10 @@
   "diagnostic_loose_filters": true,
   "carry": {
     "enabled": true,
-    "maxDays": 30,
-    "roiMinPct": 4,
-    "roiMaxPct": 10,
-    "maxSpread": 0.12,
+    "maxDays": 60,
+    "roiMinPct": 3,
+    "roiMaxPct": 12,
+    "maxSpread": 0.20,
     "allowSyntheticAsk": true,
     "syntheticTick": 0.01,
     "syntheticMaxAsk": 0.995
