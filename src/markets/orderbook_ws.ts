@@ -153,14 +153,17 @@ export function getTopOfBook(noTokenId: string | null, maxLevels: number = 5): T
   };
 }
 
-/** Get full depth for a token (for fill simulation). */
-export function getDepth(noTokenId: string | null): OrderLevel[] {
+/** Get full depth for a token (for fill simulation). Default "asks" for buying NO; use "bids" for selling (exits). */
+export function getDepth(
+  noTokenId: string | null,
+  side: "bids" | "asks" = "asks"
+): OrderLevel[] {
   if (!noTokenId) return [];
   const key = normalizeBookKey(noTokenId);
   if (!key) return [];
   const state = books.get(key);
   if (!state) return [];
-  return state.asks.slice();
+  return (side === "asks" ? state.asks : state.bids).slice();
 }
 
 /** Debug: hasKey (using same normalized lookup), sample keys, size. */
