@@ -5,6 +5,7 @@
  */
 
 import { createHash } from "crypto";
+import { getMarketEndTimeIso, getMarketEndTimeMs } from "../markets/market_time";
 import { normalizeBookKey } from "../markets/orderbook_ws";
 import { fetchTopOfBookHttp, type HttpTopOfBook } from "../markets/clob_http";
 import type { NormalizedMarket, TopOfBook } from "../types";
@@ -49,6 +50,8 @@ export interface CarryConfig {
   spreadEdgeMaxRatio?: number;
   /** Min absolute edge (1 - yesAsk) to allow; reject when edge <= this. Default 0. */
   spreadEdgeMinAbs?: number;
+  /** Min time to resolution (days); reject when tDays < this. Default 2. */
+  minDaysToResolution?: number;
 }
 
 const DEFAULT_CARRY_KEYWORDS = [
@@ -162,6 +165,8 @@ export interface CarryCandidate {
   synthetic_time?: boolean;
   synthetic_time_reason?: string;
   synthetic_time_to_resolution_days?: number;
+  /** Observability: market end/resolution time ISO. */
+  end_time_iso?: string;
 }
 
 export type GetTopOfBook = (tokenId: string | null) => TopOfBook | null;
@@ -185,6 +190,8 @@ function httpToTopOfBook(h: HttpTopOfBook, minAskLiqUsd: number): TopOfBook {
 export interface CarryDebugCounters {
   missing_yes_token_id: number;
   missing_end_time: number;
+  already_ended_or_resolving: number;
+  too_soon_to_resolve: number;
   beyond_max_days: number;
   procedural_rejected: number;
   no_book_or_ask: number;
@@ -224,6 +231,8 @@ export async function selectCarryCandidates(
   const carryDebug: CarryDebugCounters = {
     missing_yes_token_id: 0,
     missing_end_time: 0,
+    already_ended_or_resolving: 0,
+    too_soon_to_resolve: 0,
     beyond_max_days: 0,
     procedural_rejected: 0,
     no_book_or_ask: 0,
@@ -249,6 +258,7 @@ export async function selectCarryCandidates(
   const doFetchHttp = fetchHttp ?? fetchTopOfBookHttp;
   const {
     maxDays,
+    minDaysToResolution = 2,
     roiMinPct,
     roiMaxPct,
     maxSpread,
@@ -275,25 +285,27 @@ export async function selectCarryCandidates(
       continue;
     }
 
-    let days = timeToResolutionDays(market, now);
-    let synthetic_time = false;
-    let synthetic_time_reason: string | undefined;
-    let synthetic_time_to_resolution_days: number | undefined;
-    if (days == null) {
-      if (!allowSyntheticAsk) {
-        carryDebug.missing_end_time++;
-        carryDebug.synthetic_time_rejected++;
-        continue;
-      }
-      days = 1;
-      synthetic_time = true;
-      synthetic_time_reason = "implicit_deadline_paper_only";
-      synthetic_time_to_resolution_days = 1;
+    const endMs = getMarketEndTimeMs(market);
+    if (endMs == null) {
+      carryDebug.missing_end_time++;
+      continue;
     }
-    if (days > maxDays) {
+    const nowMs = now.getTime();
+    const tDays = (endMs - nowMs) / (1000 * 60 * 60 * 24);
+    if (tDays <= 0) {
+      carryDebug.already_ended_or_resolving++;
+      continue;
+    }
+    if (tDays < minDaysToResolution) {
+      carryDebug.too_soon_to_resolve++;
+      continue;
+    }
+    if (tDays > maxDays) {
       carryDebug.beyond_max_days++;
       continue;
     }
+    const days = tDays;
+    const end_time_iso = getMarketEndTimeIso(market) ?? undefined;
 
     if (!isProceduralCandidate(market, allowCategories, allowKeywords)) {
       carryDebug.procedural_rejected++;
@@ -406,7 +418,6 @@ export async function selectCarryCandidates(
 
     carryDebug.passed++;
     if (synthetic_ask) carryDebug.synthetic_used++;
-    if (synthetic_time) carryDebug.synthetic_time_used++;
 
     const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
     const spread_edge_ratio: number | null =
@@ -427,6 +438,7 @@ export async function selectCarryCandidates(
       edge_abs: edgeAbs,
       spread_edge_ratio,
       price_source,
+      ...(end_time_iso != null && { end_time_iso }),
       ...(httpFallbackUsed && { http_fallback_used: true }),
       ...(synthetic_ask && {
         synthetic_ask: true,
@@ -434,11 +446,6 @@ export async function selectCarryCandidates(
         synthetic_reason,
         top_noBid,
         top_noAsk,
-      }),
-      ...(synthetic_time && {
-        synthetic_time: true,
-        synthetic_time_reason,
-        synthetic_time_to_resolution_days,
       }),
     });
   }

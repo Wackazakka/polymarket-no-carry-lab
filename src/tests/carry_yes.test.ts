@@ -142,6 +142,7 @@ describe("carry_yes selectCarryCandidates", () => {
   const baseConfig: CarryConfig = {
     enabled: true,
     maxDays: 30,
+    minDaysToResolution: 2,
     roiMinPct: 6,
     roiMaxPct: 7,
     maxSpread: 0.02,
@@ -325,7 +326,7 @@ describe("carry_yes selectCarryCandidates", () => {
     assert.strictEqual(carryDebug.synthetic_rejected_no_bid, 1);
   });
 
-  it("when no end date and allowSyntheticAsk=true -> candidate with synthetic_time=true, time_to_resolution_days=1", async () => {
+  it("when end time missing -> missing_end_time, no candidate (synthetic end time no longer allowed)", async () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
       yesTokenId: "noEnd1",
@@ -336,26 +337,42 @@ describe("carry_yes selectCarryCandidates", () => {
     const getBook = (tid: string | null) => (tid === "1" ? topOfBook(0.94, 0.01, 1000) : null);
     const config = { ...baseConfig, allowSyntheticAsk: true };
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now);
-    assert.strictEqual(candidates.length, 1);
-    assert.strictEqual(candidates[0].synthetic_time, true);
-    assert.strictEqual(candidates[0].time_to_resolution_days, 1);
-    assert.strictEqual(candidates[0].synthetic_time_reason, "implicit_deadline_paper_only");
-    assert.strictEqual(candidates[0].synthetic_time_to_resolution_days, 1);
-    assert.strictEqual(carryDebug.synthetic_time_used, 1);
-  });
-
-  it("when no end date and allowSyntheticAsk=false -> synthetic_time_rejected and missing_end_time", async () => {
-    const m = market({
-      yesTokenId: "noEnd1",
-      question: "Election?",
-      endDateIso: null,
-      resolutionTime: null,
-    });
-    const getBook = (tid: string | null) => (tid === "1" ? topOfBook(0.94, 0.01, 1000) : null);
-    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, new Date());
     assert.strictEqual(candidates.length, 0);
     assert.strictEqual(carryDebug.missing_end_time, 1);
-    assert.strictEqual(carryDebug.synthetic_time_rejected, 1);
+  });
+
+  it("market with endTime = now + 5 days -> tDays ~5 and passes when ROI/spread ok", async () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 5 * 24 * 60 * 60 * 1000);
+    const m = market({
+      yesTokenId: "five5",
+      question: "Election?",
+      category: "Politics",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
+    });
+    const getBook = (tid: string | null) => (tid === "5" ? topOfBook(0.94, 0.01, 1000) : null);
+    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, now);
+    assert.strictEqual(candidates.length, 1);
+    assert.ok(candidates[0].time_to_resolution_days >= 4.9 && candidates[0].time_to_resolution_days <= 5.1);
+    assert.ok(candidates[0].end_time_iso != null);
+    assert.strictEqual(carryDebug.passed, 1);
+  });
+
+  it("market with endTime = now + 0.1 days -> too_soon_to_resolve, rejected", async () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 0.1 * 24 * 60 * 60 * 1000);
+    const m = market({
+      yesTokenId: "soon1",
+      question: "Election?",
+      category: "Politics",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
+    });
+    const getBook = (tid: string | null) => (tid === "1" ? topOfBook(0.94, 0.01, 1000) : null);
+    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, now);
+    assert.strictEqual(candidates.length, 0);
+    assert.strictEqual(carryDebug.too_soon_to_resolve, 1);
   });
 
   it("edge-vs-spread: yesAsk=0.95, yesBid=0.88, spread=0.07 passes when spreadEdgeMaxRatio=2.0 (max allowed spread 0.10)", async () => {

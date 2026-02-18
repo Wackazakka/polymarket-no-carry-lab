@@ -60,6 +60,7 @@
   "carry": {
     "enabled": true,
     "maxDays": 30,
+    "minDaysToResolution": 2,
     "roiMinPct": 0,
     "roiMaxPct": 200,
     "maxSpread": 0.12,

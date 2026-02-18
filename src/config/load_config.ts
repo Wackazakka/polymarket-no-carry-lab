@@ -92,6 +92,8 @@ const ConfigSchema = z.object({
       spreadEdgeMaxRatio: z.number().min(0).optional().default(2.0),
       /** Min absolute edge (1 - yesAsk) to allow; reject when edge <= this. Default 0 = no min. */
       spreadEdgeMinAbs: z.number().min(0).max(1).optional().default(0.0),
+      /** Min time to resolution (days); reject when tDays < this. Default 2. */
+      minDaysToResolution: z.number().min(0).optional().default(2),
     })
     .optional()
     .default({
@@ -109,6 +111,7 @@ const ConfigSchema = z.object({
       allowHttpFallback: true,
       spreadEdgeMaxRatio: 2.0,
       spreadEdgeMinAbs: 0.0,
+      minDaysToResolution: 2,
     }),
 });
 

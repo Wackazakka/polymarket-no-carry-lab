@@ -81,7 +81,7 @@ function shouldRunDailyReport(config: { reporting: { daily_report_hour_local: nu
 }
 
 /** Effective carry config (defaults applied) for logging and /status. */
-function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: number; roiMaxPct?: number; maxSpread?: number; maxDays?: number; spreadEdgeMaxRatio?: number; spreadEdgeMinAbs?: number; allowSyntheticAsk?: boolean; allowHttpFallback?: boolean } | null }): Record<string, unknown> {
+function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: number; roiMaxPct?: number; maxSpread?: number; maxDays?: number; minDaysToResolution?: number; spreadEdgeMaxRatio?: number; spreadEdgeMinAbs?: number; allowSyntheticAsk?: boolean; allowHttpFallback?: boolean } | null }): Record<string, unknown> {
   const c = config.carry ?? { enabled: false };
   return {
     enabled: c.enabled ?? true,
@@ -89,6 +89,7 @@ function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: nu
     roiMaxPct: c.roiMaxPct ?? 7,
     maxSpread: c.maxSpread ?? 0.02,
     maxDays: c.maxDays ?? 30,
+    minDaysToResolution: c.minDaysToResolution ?? 2,
     spreadEdgeMaxRatio: c.spreadEdgeMaxRatio ?? 2.0,
     spreadEdgeMinAbs: c.spreadEdgeMinAbs ?? 0.0,
     allowSyntheticAsk: c.allowSyntheticAsk ?? false,
@@ -493,6 +494,7 @@ function main(): void {
         {
           enabled: true,
           maxDays: carryConfig.maxDays ?? 30,
+          minDaysToResolution: carryConfig.minDaysToResolution ?? 2,
           roiMinPct: carryConfig.roiMinPct ?? 6,
           roiMaxPct: carryConfig.roiMaxPct ?? 7,
           maxSpread: carryConfig.maxSpread ?? 0.02,
@@ -521,6 +523,8 @@ function main(): void {
         "synthetic_time_rejected=" + carryDebug.synthetic_time_rejected,
         "missing_yes=" + carryDebug.missing_yes_token_id,
         "no_end_time=" + carryDebug.missing_end_time,
+        "already_ended=" + carryDebug.already_ended_or_resolving,
+        "too_soon=" + carryDebug.too_soon_to_resolve,
         "beyond_max_days=" + carryDebug.beyond_max_days,
         "procedural=" + carryDebug.procedural_rejected,
         "no_book=" + carryDebug.no_book_or_ask,
@@ -578,6 +582,7 @@ function main(): void {
             carry_roi_pct: c.carry_roi_pct,
             hold_to_resolution: true,
             time_to_resolution_days: c.time_to_resolution_days,
+            ...(c.end_time_iso != null && { end_time_iso: c.end_time_iso }),
             yes_bid: c.yesBid,
             yes_ask: c.yesAsk,
             spread: c.spreadObservable,
@@ -591,11 +596,6 @@ function main(): void {
               synthetic_reason: c.synthetic_reason,
               top_noBid: c.top_noBid ?? undefined,
               top_noAsk: c.top_noAsk ?? undefined,
-            }),
-            ...(c.synthetic_time && {
-              synthetic_time: true,
-              synthetic_time_reason: c.synthetic_time_reason,
-              synthetic_time_to_resolution_days: c.synthetic_time_to_resolution_days,
             }),
           },
           headroom: allow.headroom,
@@ -615,11 +615,14 @@ function main(): void {
     console.log(`[carry] total plansForApi : ${plansForApi.length}`);
     console.log(`[carry] carry plans       : ${carryPlans.length}`);
     if (carryPlans.length > 0) {
-      console.log("[carry] sample:");
+      console.log("[carry] sample (tDays + end_time_iso):");
       carryPlans.slice(0, 3).forEach((p, i) => {
-        const ev = (p as { market_id?: string; ev_breakdown?: { carry_roi_pct?: number } });
+        const ev = (p as {
+          market_id?: string;
+          ev_breakdown?: { carry_roi_pct?: number; time_to_resolution_days?: number; end_time_iso?: string };
+        });
         console.log(
-          `  ${i + 1}) market=${ev.market_id} roi=${ev.ev_breakdown?.carry_roi_pct}`
+          `  ${i + 1}) market=${ev.market_id} roi=${ev.ev_breakdown?.carry_roi_pct} tDays=${ev.ev_breakdown?.time_to_resolution_days} end_time_iso=${ev.ev_breakdown?.end_time_iso ?? "—"}`
         );
       });
     } else {
