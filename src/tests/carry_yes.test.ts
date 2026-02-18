@@ -8,6 +8,7 @@ import {
   timeToResolutionDays,
   isProceduralCandidate,
   carryRoiPct,
+  firstTokenId,
   selectCarryCandidates,
   type CarryConfig,
 } from "../strategy/carry_yes";
@@ -90,6 +91,28 @@ describe("carry_yes isProceduralCandidate", () => {
   });
 });
 
+describe("carry_yes firstTokenId", () => {
+  it("unwraps JSON-array string to digits-only", () => {
+    assert.strictEqual(firstTokenId('["123"]'), "123");
+    assert.strictEqual(firstTokenId('["31227501234"]'), "31227501234");
+  });
+
+  it("returns digits-only for plain string", () => {
+    assert.strictEqual(firstTokenId("123"), "123");
+    assert.strictEqual(firstTokenId("yes456"), "456");
+  });
+
+  it("returns null for empty or invalid", () => {
+    assert.strictEqual(firstTokenId(""), null);
+    assert.strictEqual(firstTokenId(null), null);
+    assert.strictEqual(firstTokenId('[""]'), null);
+  });
+
+  it("parses array and strips non-digits from first element", () => {
+    assert.strictEqual(firstTokenId('["a1b2"]'), "12");
+  });
+});
+
 describe("carry_yes carryRoiPct", () => {
   it("computes (1-ask)/ask * 100 for ask 0.94", () => {
     const roi = carryRoiPct(0.94);
@@ -137,7 +160,7 @@ describe("carry_yes selectCarryCandidates", () => {
     assert.strictEqual(candidates.length, 0);
   });
 
-  it("selects market with YES ask in ROI band and within maxDays", () => {
+  it("selects market with YES ask in ROI band and within maxDays (normalized token id)", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
       yesTokenId: "yes789",
@@ -145,13 +168,29 @@ describe("carry_yes selectCarryCandidates", () => {
       category: "Politics",
       endDateIso: "2025-03-15T12:00:00Z",
     });
-    const getBook = (tid: string | null) => (tid === "yes789" ? topOfBook(0.94, 0.01, 1000) : null);
+    const getBook = (tid: string | null) => (tid === "789" ? topOfBook(0.94, 0.01, 1000) : null);
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, now);
     assert.strictEqual(candidates.length, 1);
-    assert.strictEqual(candidates[0].yesTokenId, "yes789");
+    assert.strictEqual(candidates[0].yesTokenId, "789");
     assert.strictEqual(candidates[0].yesAsk, 0.94);
     assert.ok(candidates[0].carry_roi_pct >= 6 && candidates[0].carry_roi_pct <= 7);
     assert.ok(candidates[0].time_to_resolution_days <= 30);
+    assert.strictEqual(carryDebug.passed, 1);
+  });
+
+  it("selects market when yesTokenId is JSON-array string and book exists for normalized id", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: '["123"]',
+      question: "Election winner?",
+      category: "Politics",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    const getBook = (tid: string | null) => (tid === "123" ? topOfBook(0.94, 0.01, 1000) : null);
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, now);
+    assert.strictEqual(candidates.length, 1);
+    assert.strictEqual(candidates[0].yesTokenId, "123");
+    assert.strictEqual(candidates[0].yesAsk, 0.94);
     assert.strictEqual(carryDebug.passed, 1);
   });
 
@@ -191,11 +230,11 @@ describe("carry_yes selectCarryCandidates", () => {
   it("when allowSyntheticAsk=false, no ask counts as no_book_or_ask", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
-      yesTokenId: "yesSyn",
+      yesTokenId: "syn99",
       question: "Election?",
       endDateIso: "2025-03-15T12:00:00Z",
     });
-    const getBook = () => topOfBookPartial({ noBid: 0.99, noAsk: null });
+    const getBook = (tid: string | null) => (tid === "99" ? topOfBookPartial({ noBid: 0.99, noAsk: null }) : null);
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, now);
     assert.strictEqual(candidates.length, 0);
     assert.strictEqual(carryDebug.no_book_or_ask, 1);
@@ -204,11 +243,11 @@ describe("carry_yes selectCarryCandidates", () => {
   it("when allowSyntheticAsk=true and noBid=0.93, noAsk=null -> candidate with synthetic_ask=true and price noBid+tick", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
-      yesTokenId: "yesSyn",
+      yesTokenId: "syn93",
       question: "Election?",
       endDateIso: "2025-03-15T12:00:00Z",
     });
-    const getBook = () => topOfBookPartial({ noBid: 0.93, noAsk: null });
+    const getBook = (tid: string | null) => (tid === "93" ? topOfBookPartial({ noBid: 0.93, noAsk: null }) : null);
     const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995 };
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1);
@@ -222,11 +261,11 @@ describe("carry_yes selectCarryCandidates", () => {
   it("when allowSyntheticAsk=true and noBid=0.99, noAsk=null -> yesAsk capped to syntheticMaxAsk 0.995", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
-      yesTokenId: "yesSyn",
+      yesTokenId: "syn99",
       question: "Election?",
       endDateIso: "2025-03-15T12:00:00Z",
     });
-    const getBook = () => topOfBookPartial({ noBid: 0.99, noAsk: null });
+    const getBook = (tid: string | null) => (tid === "99" ? topOfBookPartial({ noBid: 0.99, noAsk: null }) : null);
     const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995, roiMinPct: 0.1, roiMaxPct: 100 };
     const { candidates } = selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1);
@@ -238,11 +277,11 @@ describe("carry_yes selectCarryCandidates", () => {
   it("when allowSyntheticAsk=true but noBid=null -> synthetic_rejected_no_bid, no candidate", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
-      yesTokenId: "yesSyn",
+      yesTokenId: "syn0",
       question: "Election?",
       endDateIso: "2025-03-15T12:00:00Z",
     });
-    const getBook = () => topOfBookPartial({ noBid: null, noAsk: null });
+    const getBook = (tid: string | null) => (tid === "0" ? topOfBookPartial({ noBid: null, noAsk: null }) : null);
     const config = { ...baseConfig, allowSyntheticAsk: true };
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 0);
@@ -252,12 +291,12 @@ describe("carry_yes selectCarryCandidates", () => {
   it("when no end date and allowSyntheticAsk=true -> candidate with synthetic_time=true, time_to_resolution_days=1", () => {
     const now = new Date("2025-02-17T12:00:00Z");
     const m = market({
-      yesTokenId: "yesNoEnd",
+      yesTokenId: "noEnd1",
       question: "Election?",
       endDateIso: null,
       resolutionTime: null,
     });
-    const getBook = () => topOfBook(0.94, 0.01, 1000);
+    const getBook = (tid: string | null) => (tid === "1" ? topOfBook(0.94, 0.01, 1000) : null);
     const config = { ...baseConfig, allowSyntheticAsk: true };
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1);
@@ -270,12 +309,12 @@ describe("carry_yes selectCarryCandidates", () => {
 
   it("when no end date and allowSyntheticAsk=false -> synthetic_time_rejected and missing_end_time", () => {
     const m = market({
-      yesTokenId: "yesNoEnd",
+      yesTokenId: "noEnd1",
       question: "Election?",
       endDateIso: null,
       resolutionTime: null,
     });
-    const getBook = () => topOfBook(0.94, 0.01, 1000);
+    const getBook = (tid: string | null) => (tid === "1" ? topOfBook(0.94, 0.01, 1000) : null);
     const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, new Date());
     assert.strictEqual(candidates.length, 0);
     assert.strictEqual(carryDebug.missing_end_time, 1);

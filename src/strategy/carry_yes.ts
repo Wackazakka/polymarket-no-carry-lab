@@ -5,7 +5,26 @@
  */
 
 import { createHash } from "crypto";
+import { normalizeBookKey } from "../markets/orderbook_ws";
 import type { NormalizedMarket, TopOfBook } from "../types";
+
+/** Normalize outcome token id: unwrap JSON-array string like '["123"]' to digits-only; null if empty. */
+export function firstTokenId(raw: unknown): string | null {
+  let s: string;
+  if (typeof raw === "string" && raw.trim().startsWith("[")) {
+    try {
+      const arr = JSON.parse(raw) as unknown;
+      if (Array.isArray(arr) && arr.length > 0) s = String(arr[0]);
+      else s = String(raw);
+    } catch {
+      s = String(raw);
+    }
+  } else {
+    s = String(raw ?? "");
+  }
+  const key = normalizeBookKey(s);
+  return key || null;
+}
 
 export interface CarryConfig {
   enabled: boolean;
@@ -198,6 +217,11 @@ export function selectCarryCandidates(
       carryDebug.missing_yes_token_id++;
       continue;
     }
+    const yesTokenIdNorm = firstTokenId(market.yesTokenId);
+    if (!yesTokenIdNorm) {
+      carryDebug.missing_yes_token_id++;
+      continue;
+    }
 
     let days = timeToResolutionDays(market, now);
     let synthetic_time = false;
@@ -224,10 +248,10 @@ export function selectCarryCandidates(
       continue;
     }
 
-    const book = getTopOfBook(market.yesTokenId);
+    const book = getTopOfBook(yesTokenIdNorm);
     if (!book) {
       carryDebug.no_book_or_ask++;
-      if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(market.yesTokenId);
+      if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(yesTokenIdNorm);
       continue;
     }
 
@@ -243,7 +267,7 @@ export function selectCarryCandidates(
     if (book.noAsk == null || book.noAsk <= 0) {
       if (!allowSyntheticAsk) {
         carryDebug.no_book_or_ask++;
-        if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(market.yesTokenId);
+        if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(yesTokenIdNorm);
         continue;
       }
       if (book.noBid == null || book.noBid <= 0) {
@@ -282,7 +306,7 @@ export function selectCarryCandidates(
 
     out.push({
       market,
-      yesTokenId: market.yesTokenId,
+      yesTokenId: yesTokenIdNorm,
       yesAsk,
       carry_roi_pct: roi,
       spread,
