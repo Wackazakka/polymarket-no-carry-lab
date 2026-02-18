@@ -62,6 +62,7 @@
     "maxDays": 30,
     "roiMinPct": 6,
     "roiMaxPct": 7,
+    "maxSpread": 0.05,
     "allowSyntheticAsk": true,
     "syntheticTick": 0.01,
     "syntheticMaxAsk": 0.995
