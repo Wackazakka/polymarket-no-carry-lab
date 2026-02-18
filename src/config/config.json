@@ -66,7 +66,7 @@
     "allowSyntheticAsk": true,
     "syntheticTick": 0.01,
     "syntheticMaxAsk": 0.995,
-    "spreadEdgeMaxRatio": 2.0,
-    "spreadEdgeMinAbs": 0.0
+    "spreadEdgeMaxRatio": 1.0,
+    "spreadEdgeMinAbs": 0.02
   }
 }
