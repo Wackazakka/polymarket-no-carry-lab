@@ -66,6 +66,9 @@
     "allowCategories": ["Politics", "Economics"],
     "allowKeywords": ["Fed", "CPI", "election", "rate decision", "court"],
     "allowSyntheticAsk": false,
-    "syntheticTick": 0.01
+    "syntheticTick": 0.01,
+    "allowHttpFallback": true,
+    "spreadEdgeMaxRatio": 2.0,
+    "spreadEdgeMinAbs": 0.0
   }
 }

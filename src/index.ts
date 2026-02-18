@@ -460,7 +460,7 @@ function main(): void {
     const carryConfig = config.carry ?? { enabled: false };
     let carryMeta: Record<string, unknown> = {};
     if (carryConfig.enabled) {
-      const { candidates: carryCandidates, carryDebug, sampleNoBookTokenIds } = selectCarryCandidates(
+      const { candidates: carryCandidates, carryDebug, sampleNoBookTokenIds } = await selectCarryCandidates(
         markets,
         (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
         {
@@ -477,6 +477,10 @@ function main(): void {
           allowSyntheticAsk: carryConfig.allowSyntheticAsk ?? false,
           syntheticTick: carryConfig.syntheticTick ?? 0.01,
           syntheticMaxAsk: carryConfig.syntheticMaxAsk ?? 0.995,
+          allowHttpFallback: carryConfig.allowHttpFallback ?? true,
+          clobHttpBaseUrl: config.api.clobRestBaseUrl,
+          spreadEdgeMaxRatio: carryConfig.spreadEdgeMaxRatio ?? 2.0,
+          spreadEdgeMinAbs: carryConfig.spreadEdgeMinAbs ?? 0.0,
         },
         now
       );
@@ -495,7 +499,11 @@ function main(): void {
         "no_book=" + carryDebug.no_book_or_ask,
         "roi_band=" + carryDebug.roi_out_of_band,
         "spread=" + carryDebug.spread_too_high,
-        "ask_liq=" + carryDebug.ask_liq_too_low
+        "spread_edge=" + carryDebug.spread_edge_too_high,
+        "edge_small=" + carryDebug.edge_too_small,
+        "ask_liq=" + carryDebug.ask_liq_too_low,
+        "http_used=" + carryDebug.http_used,
+        "http_failed=" + carryDebug.http_failed
       );
       if (sampleNoBookTokenIds.length > 0) {
         const booksDebug = getBooksDebug();
@@ -543,6 +551,13 @@ function main(): void {
             carry_roi_pct: c.carry_roi_pct,
             hold_to_resolution: true,
             time_to_resolution_days: c.time_to_resolution_days,
+            yes_bid: c.yesBid,
+            yes_ask: c.yesAsk,
+            spread: c.spreadObservable,
+            edge_abs: c.edge_abs,
+            spread_edge_ratio: c.spread_edge_ratio,
+            price_source: c.price_source,
+            ...(c.http_fallback_used && { http_fallback_used: true }),
             ...(c.synthetic_ask && {
               synthetic_ask: true,
               synthetic_ask_price: c.synthetic_ask_price,
@@ -725,7 +740,7 @@ function main(): void {
     return { executed: true, positionId: position.id };
   }
 
-  createControlApi(config.control_api.port, { confirmHandler: executePlan });
+  createControlApi(config.control_api.port, { confirmHandler: executePlan }, { clobRestBaseUrl: config.api.clobRestBaseUrl });
 
   (async () => {
     await runScan().catch((e) => console.error("[startup]", e));

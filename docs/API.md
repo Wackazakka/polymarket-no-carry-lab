@@ -37,8 +37,10 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 - **count_returned** — Length of `plans` in this response.
 - **limit**, **offset** — Applied pagination (defaults or clamped).
 
-Each plan has `ev_breakdown` (object). For **carry (YES)** plans, `ev_breakdown` may include:
+Each plan has `ev_breakdown` (object). For **carry (YES)** plans, `ev_breakdown` always includes pricing observability and may include synthetic flags:
 - `mode: "carry"`, `carry_roi_pct`, `hold_to_resolution`, `time_to_resolution_days`
+- **Pricing (always present):** `yes_bid` (number or null), `yes_ask` (number), `spread` (number when both bid and ask exist, else null; spread = yes_ask − yes_bid), `edge_abs` (number; edge = 1 − yes_ask, upside per $1 share), `spread_edge_ratio` (number when spread and edge &gt; 0, else null; spread / edge_abs), `price_source` (`"ws"` | `"http"` | `"synthetic_ask"`), and optionally `http_fallback_used: true` when CLOB HTTP was used for top-of-book.
+- **Edge-vs-spread rule:** a candidate is accepted only if spread ≤ edge_abs × `spreadEdgeMaxRatio` (config). So spread must not be too large relative to carry edge. The absolute `maxSpread` check still applies; this is an additional proportional gate. The carry scan also exposes **carry_debug** counters: `spread_edge_too_high` (rejected because spread &gt; edge_abs × spreadEdgeMaxRatio) and `edge_too_small` (rejected because edge_abs ≤ spreadEdgeMinAbs).
 - **Synthetic ask (PAPER ONLY):** when YES book had no ask, a synthetic entry price can be used for paper testing. Then `ev_breakdown` also includes `synthetic_ask: true`, `synthetic_ask_price`, `synthetic_reason` (e.g. `"no_ask_using_noBid_plus_tick"`), `top_noBid`, `top_noAsk`. These plans are **never** executed; they are for analysis only.
 - **Synthetic time (PAPER ONLY):** when the market has no end/resolution date and synthetic carry is enabled, `time_to_resolution_days` is set to 1 and `ev_breakdown` includes `synthetic_time: true`, `synthetic_time_reason` (e.g. `"implicit_deadline_paper_only"`), `synthetic_time_to_resolution_days`. These plans are **never** executed.
 
@@ -67,6 +69,8 @@ Invalid query (e.g. unknown param or `offset < 0`):
 
 **GET** returns top-of-book for a given outcome token id. **HEAD** accepts the same query and returns 200 with the same headers and no body. Works for both YES and NO outcome tokens (parameter name `no_token_id` is kept for backward compatibility).
 
+When the in-memory (WS) orderbook has no book for the token—or has a book with both `noBid` and `noAsk` null—the API may use **CLOB HTTP fallback** (GET CLOB `/book?token_id=...`). Base URL is `process.env.CLOB_HTTP_BASE` or the configured API base. When fallback is used, the response includes `price_source: "http"` and `http_fallback_used: true`; otherwise `price_source: "ws"` and `http_fallback_used: false`.
+
 ### Query parameters
 
 | Param          | Type   | Description |
@@ -87,13 +91,17 @@ Invalid query (e.g. unknown param or `offset < 0`):
     "bidLiquidityUsd": 1000,
     "askLiquidityUsd": 800,
     "levels": 5
-  }
+  },
+  "price_source": "ws",
+  "http_fallback_used": false
 }
 ```
 
 - **no_token_id** — Normalized token id used for the book.
 - **noBid**, **noAsk**, **spread** — Top-of-book levels (numbers or null).
-- **depthSummary** — `bidLiquidityUsd`, `askLiquidityUsd`, `levels`.
+- **depthSummary** — `bidLiquidityUsd`, `askLiquidityUsd`, `levels`. When from HTTP fallback, liquidity may be 0.
+- **price_source** — `"ws"` (in-memory orderbook) or `"http"` (CLOB REST fallback).
+- **http_fallback_used** — `true` when top-of-book was obtained via CLOB HTTP because WS had no book.
 
 ### Response headers
 
@@ -153,6 +161,8 @@ Example: `curl -s "http://localhost:3344/has-book?token_id=12345"`
 
 Simulated fill against the in-memory orderbook for a given outcome token (YES or NO): buy (hit asks) or sell (hit bids) for a target `size_usd`. Returns fill summary with avg price, levels used, and slippage. Parameter name `no_token_id` accepts any outcome token id.
 
+When the WS orderbook has no book (or both bid and ask null), the API may use **CLOB HTTP fallback** to get top-of-book; the fill is then simulated using a single level (best ask for buy, best bid for sell) with `levels_used: 1` and `slippage_pct: 0`. The response includes `price_source` and `http_fallback_used` as for `/book`.
+
 ### Query parameters
 
 | Param          | Type   | Description |
@@ -175,11 +185,15 @@ Simulated fill against the in-memory orderbook for a given outcome token (YES or
   "filled_shares": 200.0,
   "avg_price": 0.50,
   "levels_used": 3,
-  "slippage_pct": 0.12
+  "slippage_pct": 0.12,
+  "price_source": "ws",
+  "http_fallback_used": false
 }
 ```
 
 - **top** — Top-of-book at request time (noBid, noAsk, spread).
+- **price_source** — `"ws"` or `"http"` (same as `/book`).
+- **http_fallback_used** — `true` when top-of-book came from CLOB HTTP fallback.
 - **filled_usd** — USD spent (buy) or proceeds (sell).
 - **filled_shares** — Shares filled (may be less than full size if book is thin).
 - **avg_price** — filled_usd / filled_shares.

@@ -87,6 +87,11 @@ const ConfigSchema = z.object({
       allowSyntheticAsk: z.boolean().optional().default(false),
       syntheticTick: z.number().min(0).max(1).optional().default(0.01),
       syntheticMaxAsk: z.number().min(0).max(1).optional().default(0.995),
+      allowHttpFallback: z.boolean().optional().default(true),
+      /** Max spread/edge ratio: reject when spread > edge_abs * this (edge = 1 - yesAsk). Default 2.0. */
+      spreadEdgeMaxRatio: z.number().min(0).optional().default(2.0),
+      /** Min absolute edge (1 - yesAsk) to allow; reject when edge <= this. Default 0 = no min. */
+      spreadEdgeMinAbs: z.number().min(0).max(1).optional().default(0.0),
     })
     .optional()
     .default({
@@ -101,6 +106,9 @@ const ConfigSchema = z.object({
       allowSyntheticAsk: false,
       syntheticTick: 0.01,
       syntheticMaxAsk: 0.995,
+      allowHttpFallback: true,
+      spreadEdgeMaxRatio: 2.0,
+      spreadEdgeMinAbs: 0.0,
     }),
 });
 
