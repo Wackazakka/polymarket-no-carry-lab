@@ -37,6 +37,11 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 - **count_returned** — Length of `plans` in this response.
 - **limit**, **offset** — Applied pagination (defaults or clamped).
 
+Each plan has `ev_breakdown` (object). For **carry (YES)** plans, `ev_breakdown` may include:
+- `mode: "carry"`, `carry_roi_pct`, `hold_to_resolution`, `time_to_resolution_days`
+- **Synthetic ask (PAPER ONLY):** when YES book had no ask, a synthetic entry price can be used for paper testing. Then `ev_breakdown` also includes `synthetic_ask: true`, `synthetic_ask_price`, `synthetic_reason` (e.g. `"no_ask_using_noBid_plus_tick"`), `top_noBid`, `top_noAsk`. These plans are **never** executed; they are for analysis only.
+- **Synthetic time (PAPER ONLY):** when the market has no end/resolution date and synthetic carry is enabled, `time_to_resolution_days` is set to 1 and `ev_breakdown` includes `synthetic_time: true`, `synthetic_time_reason` (e.g. `"implicit_deadline_paper_only"`), `synthetic_time_to_resolution_days`. These plans are **never** executed.
+
 ### Response headers
 
 | Header             | Meaning |

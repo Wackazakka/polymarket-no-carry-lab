@@ -474,6 +474,9 @@ function main(): void {
           bankroll_fraction: carryConfig.bankroll_fraction,
           allowCategories: carryConfig.allowCategories ?? [],
           allowKeywords: carryConfig.allowKeywords ?? [],
+          allowSyntheticAsk: carryConfig.allowSyntheticAsk ?? false,
+          syntheticTick: carryConfig.syntheticTick ?? 0.01,
+          syntheticMaxAsk: carryConfig.syntheticMaxAsk ?? 0.995,
         },
         now
       );
@@ -481,6 +484,10 @@ function main(): void {
       console.log(
         "[carry]",
         "passed=" + carryDebug.passed,
+        "synthetic_used=" + carryDebug.synthetic_used,
+        "synthetic_rejected_no_bid=" + carryDebug.synthetic_rejected_no_bid,
+        "synthetic_time_used=" + carryDebug.synthetic_time_used,
+        "synthetic_time_rejected=" + carryDebug.synthetic_time_rejected,
         "missing_yes=" + carryDebug.missing_yes_token_id,
         "no_end_time=" + carryDebug.missing_end_time,
         "beyond_max_days=" + carryDebug.beyond_max_days,
@@ -528,6 +535,18 @@ function main(): void {
             carry_roi_pct: c.carry_roi_pct,
             hold_to_resolution: true,
             time_to_resolution_days: c.time_to_resolution_days,
+            ...(c.synthetic_ask && {
+              synthetic_ask: true,
+              synthetic_ask_price: c.synthetic_ask_price,
+              synthetic_reason: c.synthetic_reason,
+              top_noBid: c.top_noBid ?? undefined,
+              top_noAsk: c.top_noAsk ?? undefined,
+            }),
+            ...(c.synthetic_time && {
+              synthetic_time: true,
+              synthetic_time_reason: c.synthetic_time_reason,
+              synthetic_time_to_resolution_days: c.synthetic_time_to_resolution_days,
+            }),
           },
           headroom: allow.headroom,
           status: "proposed" as const,
@@ -624,6 +643,11 @@ function main(): void {
     const plan = getPlan(planId);
     if (!plan) return null;
     if (isPlanExecuted(planId)) return { executed: false, reason: "already executed" };
+    const ev = plan.ev_breakdown as { mode?: string; synthetic_ask?: boolean; synthetic_time?: boolean } | undefined;
+    if (ev?.mode === "carry" && (ev?.synthetic_ask === true || ev?.synthetic_time === true)) {
+      console.log(`[ops] Skipping execute (paper-only synthetic carry) plan_id=${planId}`);
+      return { executed: false, reason: "paper_only_synthetic_carry" };
+    }
     const gate = getConfirmGateRejection();
     if (gate) return { executed: false, reason: gate };
     const proposal: TradeProposal = {

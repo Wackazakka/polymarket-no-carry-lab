@@ -103,6 +103,18 @@ describe("carry_yes carryRoiPct", () => {
   });
 });
 
+function topOfBookPartial(overrides: { noBid?: number | null; noAsk?: number | null; spread?: number; askLiquidityUsd?: number }): TopOfBook {
+  const defaultAsk = 0.5;
+  const noAskVal = overrides.noAsk !== undefined ? overrides.noAsk : defaultAsk;
+  const noBidVal = overrides.noBid ?? (typeof noAskVal === "number" ? noAskVal - (overrides.spread ?? 0.01) : 0.49);
+  return {
+    noBid: overrides.noBid !== undefined ? overrides.noBid : noBidVal,
+    noAsk: noAskVal,
+    spread: overrides.spread ?? 0.01,
+    depthSummary: { bidLiquidityUsd: 1000, askLiquidityUsd: overrides.askLiquidityUsd ?? 1000, levels: 5 },
+  };
+}
+
 describe("carry_yes selectCarryCandidates", () => {
   const baseConfig: CarryConfig = {
     enabled: true,
@@ -113,6 +125,9 @@ describe("carry_yes selectCarryCandidates", () => {
     minAskLiqUsd: 500,
     allowCategories: ["Politics"],
     allowKeywords: ["election"],
+    allowSyntheticAsk: false,
+    syntheticTick: 0.01,
+    syntheticMaxAsk: 0.995,
   };
 
   it("returns empty when carry disabled", () => {
@@ -171,5 +186,99 @@ describe("carry_yes selectCarryCandidates", () => {
     const { candidates, carryDebug } = selectCarryCandidates([m], () => topOfBook(0.94), baseConfig, new Date());
     assert.strictEqual(candidates.length, 0);
     assert.strictEqual(carryDebug.missing_yes_token_id, 1);
+  });
+
+  it("when allowSyntheticAsk=false, no ask counts as no_book_or_ask", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yesSyn",
+      question: "Election?",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    const getBook = () => topOfBookPartial({ noBid: 0.99, noAsk: null });
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, now);
+    assert.strictEqual(candidates.length, 0);
+    assert.strictEqual(carryDebug.no_book_or_ask, 1);
+  });
+
+  it("when allowSyntheticAsk=true and noBid=0.93, noAsk=null -> candidate with synthetic_ask=true and price noBid+tick", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yesSyn",
+      question: "Election?",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    const getBook = () => topOfBookPartial({ noBid: 0.93, noAsk: null });
+    const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995 };
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
+    assert.strictEqual(candidates.length, 1);
+    assert.strictEqual(candidates[0].synthetic_ask, true);
+    assert.ok(Math.abs((candidates[0].yesAsk ?? 0) - 0.94) < 1e-9);
+    assert.ok(Math.abs((candidates[0].synthetic_ask_price ?? 0) - 0.94) < 1e-9);
+    assert.strictEqual(candidates[0].synthetic_reason, "no_ask_using_noBid_plus_tick");
+    assert.strictEqual(carryDebug.synthetic_used, 1);
+  });
+
+  it("when allowSyntheticAsk=true and noBid=0.99, noAsk=null -> yesAsk capped to syntheticMaxAsk 0.995", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yesSyn",
+      question: "Election?",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    const getBook = () => topOfBookPartial({ noBid: 0.99, noAsk: null });
+    const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995, roiMinPct: 0.1, roiMaxPct: 100 };
+    const { candidates } = selectCarryCandidates([m], getBook, config, now);
+    assert.strictEqual(candidates.length, 1);
+    assert.strictEqual(candidates[0].synthetic_ask, true);
+    assert.ok(Math.abs((candidates[0].yesAsk ?? 0) - 0.995) < 1e-9);
+    assert.ok(Math.abs((candidates[0].synthetic_ask_price ?? 0) - 0.995) < 1e-9);
+  });
+
+  it("when allowSyntheticAsk=true but noBid=null -> synthetic_rejected_no_bid, no candidate", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yesSyn",
+      question: "Election?",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    const getBook = () => topOfBookPartial({ noBid: null, noAsk: null });
+    const config = { ...baseConfig, allowSyntheticAsk: true };
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
+    assert.strictEqual(candidates.length, 0);
+    assert.strictEqual(carryDebug.synthetic_rejected_no_bid, 1);
+  });
+
+  it("when no end date and allowSyntheticAsk=true -> candidate with synthetic_time=true, time_to_resolution_days=1", () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yesNoEnd",
+      question: "Election?",
+      endDateIso: null,
+      resolutionTime: null,
+    });
+    const getBook = () => topOfBook(0.94, 0.01, 1000);
+    const config = { ...baseConfig, allowSyntheticAsk: true };
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, config, now);
+    assert.strictEqual(candidates.length, 1);
+    assert.strictEqual(candidates[0].synthetic_time, true);
+    assert.strictEqual(candidates[0].time_to_resolution_days, 1);
+    assert.strictEqual(candidates[0].synthetic_time_reason, "implicit_deadline_paper_only");
+    assert.strictEqual(candidates[0].synthetic_time_to_resolution_days, 1);
+    assert.strictEqual(carryDebug.synthetic_time_used, 1);
+  });
+
+  it("when no end date and allowSyntheticAsk=false -> synthetic_time_rejected and missing_end_time", () => {
+    const m = market({
+      yesTokenId: "yesNoEnd",
+      question: "Election?",
+      endDateIso: null,
+      resolutionTime: null,
+    });
+    const getBook = () => topOfBook(0.94, 0.01, 1000);
+    const { candidates, carryDebug } = selectCarryCandidates([m], getBook, baseConfig, new Date());
+    assert.strictEqual(candidates.length, 0);
+    assert.strictEqual(carryDebug.missing_end_time, 1);
+    assert.strictEqual(carryDebug.synthetic_time_rejected, 1);
   });
 });

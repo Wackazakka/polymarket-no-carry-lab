@@ -18,6 +18,9 @@ export interface CarryConfig {
   bankroll_fraction?: number;
   allowCategories: string[];
   allowKeywords: string[];
+  allowSyntheticAsk: boolean;
+  syntheticTick: number;
+  syntheticMaxAsk: number;
 }
 
 const DEFAULT_CARRY_KEYWORDS = [
@@ -109,6 +112,16 @@ export interface CarryCandidate {
   time_to_resolution_days: number;
   assumption_key: string;
   window_key: string;
+  /** True when ask was synthetic (noAsk null, noBid + tick). PAPER ONLY. */
+  synthetic_ask?: boolean;
+  synthetic_ask_price?: number;
+  synthetic_reason?: string;
+  top_noBid?: number | null;
+  top_noAsk?: number | null;
+  /** True when resolution time was synthetic (no end date). PAPER ONLY. */
+  synthetic_time?: boolean;
+  synthetic_time_reason?: string;
+  synthetic_time_to_resolution_days?: number;
 }
 
 export type GetTopOfBook = (tokenId: string | null) => TopOfBook | null;
@@ -123,6 +136,10 @@ export interface CarryDebugCounters {
   spread_too_high: number;
   ask_liq_too_low: number;
   passed: number;
+  synthetic_used: number;
+  synthetic_rejected_no_bid: number;
+  synthetic_time_used: number;
+  synthetic_time_rejected: number;
 }
 
 export interface SelectCarryResult {
@@ -150,12 +167,27 @@ export function selectCarryCandidates(
     spread_too_high: 0,
     ask_liq_too_low: 0,
     passed: 0,
+    synthetic_used: 0,
+    synthetic_rejected_no_bid: 0,
+    synthetic_time_used: 0,
+    synthetic_time_rejected: 0,
   };
 
   if (!config.enabled) return { candidates: [], carryDebug };
 
   const out: CarryCandidate[] = [];
-  const { maxDays, roiMinPct, roiMaxPct, maxSpread, minAskLiqUsd, allowCategories, allowKeywords } = config;
+  const {
+    maxDays,
+    roiMinPct,
+    roiMaxPct,
+    maxSpread,
+    minAskLiqUsd,
+    allowCategories,
+    allowKeywords,
+    allowSyntheticAsk,
+    syntheticTick,
+    syntheticMaxAsk,
+  } = config;
 
   for (const market of markets) {
     if (!market.yesTokenId) {
@@ -163,10 +195,20 @@ export function selectCarryCandidates(
       continue;
     }
 
-    const days = timeToResolutionDays(market, now);
+    let days = timeToResolutionDays(market, now);
+    let synthetic_time = false;
+    let synthetic_time_reason: string | undefined;
+    let synthetic_time_to_resolution_days: number | undefined;
     if (days == null) {
-      carryDebug.missing_end_time++;
-      continue;
+      if (!allowSyntheticAsk) {
+        carryDebug.missing_end_time++;
+        carryDebug.synthetic_time_rejected++;
+        continue;
+      }
+      days = 1;
+      synthetic_time = true;
+      synthetic_time_reason = "implicit_deadline_paper_only";
+      synthetic_time_to_resolution_days = 1;
     }
     if (days > maxDays) {
       carryDebug.beyond_max_days++;
@@ -179,31 +221,59 @@ export function selectCarryCandidates(
     }
 
     const book = getTopOfBook(market.yesTokenId);
-    if (!book || book.noAsk == null || book.noAsk <= 0) {
+    if (!book) {
       carryDebug.no_book_or_ask++;
       continue;
     }
 
-    const yesAsk = book.noAsk;
+    let yesAsk: number;
+    let spread: number;
+    let askLiquidityUsd: number;
+    let synthetic_ask = false;
+    let synthetic_ask_price: number | undefined;
+    let synthetic_reason: string | undefined;
+    const top_noBid = book.noBid ?? null;
+    const top_noAsk = book.noAsk ?? null;
+
+    if (book.noAsk == null || book.noAsk <= 0) {
+      if (!allowSyntheticAsk) {
+        carryDebug.no_book_or_ask++;
+        continue;
+      }
+      if (book.noBid == null || book.noBid <= 0) {
+        carryDebug.synthetic_rejected_no_bid++;
+        continue;
+      }
+      synthetic_ask_price = Math.min(book.noBid + syntheticTick, syntheticMaxAsk);
+      yesAsk = synthetic_ask_price;
+      synthetic_ask = true;
+      synthetic_reason = "no_ask_using_noBid_plus_tick";
+      spread = syntheticTick;
+      askLiquidityUsd = 0;
+    } else {
+      yesAsk = book.noAsk;
+      spread = book.spread ?? 0;
+      if (spread > maxSpread) {
+        carryDebug.spread_too_high++;
+        continue;
+      }
+      askLiquidityUsd = book.depthSummary?.askLiquidityUsd ?? 0;
+      if (askLiquidityUsd < minAskLiqUsd) {
+        carryDebug.ask_liq_too_low++;
+        continue;
+      }
+    }
+
     const roi = carryRoiPct(yesAsk);
     if (roi < roiMinPct || roi > roiMaxPct) {
       carryDebug.roi_out_of_band++;
       continue;
     }
 
-    const spread = book.spread ?? 0;
-    if (spread > maxSpread) {
-      carryDebug.spread_too_high++;
-      continue;
-    }
-
-    const askLiquidityUsd = book.depthSummary?.askLiquidityUsd ?? 0;
-    if (askLiquidityUsd < minAskLiqUsd) {
-      carryDebug.ask_liq_too_low++;
-      continue;
-    }
-
     carryDebug.passed++;
+    if (synthetic_ask) carryDebug.synthetic_used++;
+    if (synthetic_time) carryDebug.synthetic_time_used++;
+
     out.push({
       market,
       yesTokenId: market.yesTokenId,
@@ -214,6 +284,18 @@ export function selectCarryCandidates(
       time_to_resolution_days: days,
       assumption_key: carryAssumptionKey(market),
       window_key: carryWindowKey(days),
+      ...(synthetic_ask && {
+        synthetic_ask: true,
+        synthetic_ask_price,
+        synthetic_reason,
+        top_noBid,
+        top_noAsk,
+      }),
+      ...(synthetic_time && {
+        synthetic_time: true,
+        synthetic_time_reason,
+        synthetic_time_to_resolution_days,
+      }),
     });
   }
 
