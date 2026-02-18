@@ -87,6 +87,7 @@ export interface HeadroomSnapshot {
 export interface TradePlan {
   plan_id: string;
   created_at: string;
+  updated_at?: string;
   market_id: string;
   condition_id: string;
   no_token_id: string;

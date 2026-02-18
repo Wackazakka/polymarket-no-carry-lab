@@ -41,7 +41,7 @@ import { initPositionsDb, listPositions, insertPosition } from "./state/position
 import { initLedgerDb, appendLedger } from "./state/ledger";
 import { generateReport, writeReportToFile, type ReportInput } from "./audit";
 import type { NormalizedMarket, TradePlan } from "./types";
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import {
   getMode,
   isPanic,
@@ -83,6 +83,13 @@ function shouldRunDailyReport(config: { reporting: { daily_report_hour_local: nu
 function normalizeTokenId(x: unknown): string {
   if (typeof x !== "string") return "";
   return x.replace(/[^0-9]/g, "");
+}
+
+/** Stable plan identity for upsert: same market + no_token + outcome => same plan_id. */
+function stablePlanId(marketId: string, noTokenId: string, outcome: "NO"): string {
+  const normalized = normalizeTokenId(noTokenId) || String(noTokenId).trim();
+  const key = `${marketId}|${normalized}|${outcome}`;
+  return createHash("sha1").update(key, "utf8").digest("hex");
 }
 
 function main(): void {
@@ -396,7 +403,7 @@ function main(): void {
             }
           : fill;
 
-      const planId = randomUUID();
+      const planId = stablePlanId(market.marketId, market.noTokenId!, "NO");
       const planPayload: Omit<TradePlan, "plan_id" | "created_at" | "status"> = {
         market_id: market.marketId,
         condition_id: market.conditionId,
@@ -434,10 +441,9 @@ function main(): void {
 
     /** Report count = length of the real proposed array. */
     tradesProposed = proposedPlans.length;
-    /** 1:1 JSON-safe copy for plan_store (same length as proposedPlans). */
+    /** 1:1 JSON-safe copy for plan_store (same length as proposedPlans). created_at/updated_at set by store on upsert. */
     const plansForApi = proposedPlans.map((p) => ({
       plan_id: p.planId,
-      created_at: p.createdAt,
       ...p.planPayload,
       no_token_id: normalizeTokenId(p.planPayload.no_token_id),
       status: "proposed" as const,
