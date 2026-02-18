@@ -56,5 +56,14 @@
   "db": {
     "path": "./data/polymarket_lab.db"
   },
-  "diagnostic_loose_filters": true
+  "diagnostic_loose_filters": true,
+  "carry": {
+    "enabled": true,
+    "maxDays": 30,
+    "roiMinPct": 6,
+    "roiMaxPct": 7,
+    "allowSyntheticAsk": true,
+    "syntheticTick": 0.01,
+    "syntheticMaxAsk": 0.995
+  }
 }
