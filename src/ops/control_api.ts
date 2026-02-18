@@ -256,7 +256,14 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
           return;
         }
         // Return stored records as-is so updated_at (and created_at) flow through from plan_store.
-        const payload = { count_total, count_returned, limit: q.limit, offset: q.offset, plans: out };
+        const payload = {
+          count_total,
+          count_returned,
+          limit: q.limit,
+          offset: q.offset,
+          meta: p.meta ?? null,
+          plans: out,
+        };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
         return;
