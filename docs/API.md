@@ -4,6 +4,12 @@ HTTP API for status, plans, and execution mode. Base URL is configurable (defaul
 
 ---
 
+## GET /status
+
+**GET** returns mode, panic, queue length, last-scan timestamp, proposed count, and **meta** from the plan store (same source as /plans). The **meta** field is the last-scan metadata (e.g. `ev_mode`, `carry_cfg`, `carry_debug`) and may be `null` if no scan has run yet.
+
+---
+
 ## GET /plans and HEAD /plans
 
 **GET** returns the last-scan proposed plans with optional filtering and pagination. **HEAD** accepts the same query params and returns 200 with the same headers (X-Plans-Total, X-Plans-Filtered, X-Build-Id) and no body (e.g. `curl -I .../plans?limit=2`). Order is deterministic: by `ev_breakdown.net_ev` descending, then `created_at` descending, then `plan_id` ascending (tiebreaker).

@@ -57,6 +57,20 @@ function closeServer(server: ReturnType<typeof createControlApi>): Promise<void>
   return new Promise((resolve) => server.close(() => resolve()));
 }
 
+describe("control API GET /status", () => {
+  it("GET /status returns 200 with meta key (plan_store meta, may be null)", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/status`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as Record<string, unknown>;
+      assert("meta" in body, "response must include meta key");
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
 describe("control API GET /plans", () => {
   it("GET /plans returns 200 with response contract and debug headers", async () => {
     const { server, port } = await startServer();
