@@ -145,6 +145,8 @@ export interface CarryDebugCounters {
 export interface SelectCarryResult {
   candidates: CarryCandidate[];
   carryDebug: CarryDebugCounters;
+  /** First few yesTokenIds that hit no_book_or_ask (for carry probe logging). */
+  sampleNoBookTokenIds: string[];
 }
 
 /**
@@ -173,9 +175,11 @@ export function selectCarryCandidates(
     synthetic_time_rejected: 0,
   };
 
-  if (!config.enabled) return { candidates: [], carryDebug };
+  if (!config.enabled) return { candidates: [], carryDebug, sampleNoBookTokenIds: [] };
 
   const out: CarryCandidate[] = [];
+  const sampleNoBookTokenIds: string[] = [];
+  const MAX_NO_BOOK_SAMPLE = 5;
   const {
     maxDays,
     roiMinPct,
@@ -223,6 +227,7 @@ export function selectCarryCandidates(
     const book = getTopOfBook(market.yesTokenId);
     if (!book) {
       carryDebug.no_book_or_ask++;
+      if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(market.yesTokenId);
       continue;
     }
 
@@ -238,6 +243,7 @@ export function selectCarryCandidates(
     if (book.noAsk == null || book.noAsk <= 0) {
       if (!allowSyntheticAsk) {
         carryDebug.no_book_or_ask++;
+        if (sampleNoBookTokenIds.length < MAX_NO_BOOK_SAMPLE) sampleNoBookTokenIds.push(market.yesTokenId);
         continue;
       }
       if (book.noBid == null || book.noBid <= 0) {
@@ -299,5 +305,5 @@ export function selectCarryCandidates(
     });
   }
 
-  return { candidates: out, carryDebug };
+  return { candidates: out, carryDebug, sampleNoBookTokenIds };
 }

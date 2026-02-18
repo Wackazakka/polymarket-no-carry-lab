@@ -112,6 +112,43 @@ Example: `curl -s "http://localhost:3344/book?no_token_id=12345"`
 
 ---
 
+## GET /has-book
+
+Check whether the in-memory orderbook has a book for a given token id, and see the normalized key used for lookup (same as `/book` and internal orderbook).
+
+### Query parameters
+
+| Param       | Type   | Description |
+|-------------|--------|-------------|
+| `token_id`  | string | **Required.** Outcome token id (YES or NO). Trimmed; missing or blank → 400. |
+
+- Only `token_id` is allowed. Any other query param → **400** with `invalid_query` and `details`.
+
+### Response (200)
+
+```json
+{
+  "token_id": "12345",
+  "normalized_key": "12345",
+  "has_book": true,
+  "note": "normalized_key is used for orderbook lookup (digits-only); has_book = book exists for that key"
+}
+```
+
+- **token_id** — Input value (trimmed).
+- **normalized_key** — Result of the same normalization used for orderbook lookup (e.g. digits-only).
+- **has_book** — Whether a book exists for that key (`books.has(normalized_key)`).
+- **note** — Short explanation.
+
+### Error response (400)
+
+- Missing or blank `token_id`: `{ "error": "token_id required" }`
+- Unknown param(s): `{ "error": "invalid_query", "details": [ "unknown query param: ..." ] }`
+
+Example: `curl -s "http://localhost:3344/has-book?token_id=12345"`
+
+---
+
 ## GET /fill
 
 Simulated fill against the in-memory orderbook for a given outcome token (YES or NO): buy (hit asks) or sell (hit bids) for a target `size_usd`. Returns fill summary with avg price, levels used, and slippage. Parameter name `no_token_id` accepts any outcome token id.

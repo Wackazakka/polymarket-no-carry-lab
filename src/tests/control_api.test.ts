@@ -308,6 +308,40 @@ describe("control API GET /book", () => {
   });
 });
 
+describe("control API GET /has-book", () => {
+  it("GET /has-book without token_id returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/has-book`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string };
+      assert.strictEqual(body.error, "token_id required");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /has-book?token_id=123 returns 200 with token_id, normalized_key, has_book, note", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/has-book?token_id=123`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as {
+        token_id: string;
+        normalized_key: string;
+        has_book: boolean;
+        note: string;
+      };
+      assert.strictEqual(body.token_id, "123");
+      assert.strictEqual(typeof body.normalized_key, "string");
+      assert.strictEqual(typeof body.has_book, "boolean");
+      assert.strictEqual(typeof body.note, "string");
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
 describe("control API GET /fill", () => {
   it("GET /fill without no_token_id returns 400", async () => {
     const { server, port } = await startServer();

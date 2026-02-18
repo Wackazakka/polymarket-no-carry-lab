@@ -329,6 +329,34 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
         return;
       }
 
+      if (method === "GET" && path === "/has-book") {
+        const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+        const allowedHasBookParams = ["token_id"] as const;
+        for (const key of params.keys()) {
+          if (!allowedHasBookParams.includes(key as (typeof allowedHasBookParams)[number])) {
+            sendJson(res, 400, { error: "invalid_query", details: [`unknown query param: ${key}`] });
+            return;
+          }
+        }
+        const tokenIdRaw = params.get("token_id");
+        const token_id = tokenIdRaw != null ? String(tokenIdRaw).trim() : "";
+        if (!token_id) {
+          sendJson(res, 400, { error: "token_id required" });
+          return;
+        }
+        const normalized_key = normalizeBookKey(token_id) || "";
+        const booksDebug = getBooksDebug();
+        const has_book = booksDebug.hasKey(token_id);
+        res.setHeader("X-Build-Id", getBuildId());
+        sendJson(res, 200, {
+          token_id,
+          normalized_key,
+          has_book,
+          note: "normalized_key is used for orderbook lookup (digits-only); has_book = book exists for that key",
+        });
+        return;
+      }
+
       if ((method === "GET" || method === "HEAD") && path === "/books-debug") {
         const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
         const paramKeys = [...params.keys()];

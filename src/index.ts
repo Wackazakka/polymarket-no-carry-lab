@@ -460,7 +460,7 @@ function main(): void {
     const carryConfig = config.carry ?? { enabled: false };
     let carryMeta: Record<string, unknown> = {};
     if (carryConfig.enabled) {
-      const { candidates: carryCandidates, carryDebug } = selectCarryCandidates(
+      const { candidates: carryCandidates, carryDebug, sampleNoBookTokenIds } = selectCarryCandidates(
         markets,
         (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
         {
@@ -497,6 +497,14 @@ function main(): void {
         "spread=" + carryDebug.spread_too_high,
         "ask_liq=" + carryDebug.ask_liq_too_low
       );
+      if (sampleNoBookTokenIds.length > 0) {
+        const booksDebug = getBooksDebug();
+        for (const yesTokenId of sampleNoBookTokenIds) {
+          const normalized_key = normalizeBookKey(yesTokenId);
+          const has_book = booksDebug.hasKey(yesTokenId);
+          console.log("[carry probe]", { yesTokenId, has_book, normalized_key });
+        }
+      }
       const sizeUsdCarry = carryConfig.sizeUsd ?? 100;
       for (const c of carryCandidates) {
         const category = inferCategory(c.market);
