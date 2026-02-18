@@ -300,6 +300,7 @@ export async function selectCarryCandidates(
       continue;
     }
 
+    // Top-of-book must be for YES token only (carry ROI = (1 - yesAsk)/yesAsk). Never use noTokenId.
     let book: TopOfBook | null = getTopOfBook(yesTokenIdNorm);
     let httpFallbackUsed = false;
     if (!book && allowHttpFallback) {

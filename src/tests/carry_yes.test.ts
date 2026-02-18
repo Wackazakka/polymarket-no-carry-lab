@@ -405,4 +405,39 @@ describe("carry_yes selectCarryCandidates", () => {
     assert.strictEqual(candidates.length, 0);
     assert.strictEqual(carryDebug.edge_too_small, 1);
   });
+
+  it("carry ROI is computed from YES-token ask not NO-token (both tokens present, mock both books)", async () => {
+    const now = new Date("2025-02-17T12:00:00Z");
+    const m = market({
+      yesTokenId: "yes123",
+      noTokenId: "no456",
+      question: "Election?",
+      category: "Politics",
+      endDateIso: "2025-03-15T12:00:00Z",
+    });
+    // YES token normalizes to "123": best ask 0.95, bid 0.93 => carry ROI (1-0.95)/0.95*100 ≈ 5.263%
+    // NO token normalizes to "456": best ask 0.51, bid 0.49 (must not be used for carry)
+    const getBook = (tid: string | null) => {
+      if (tid === "123") return topOfBook(0.95, 0.02, 1000);
+      if (tid === "456") return topOfBook(0.51, 0.02, 1000);
+      return null;
+    };
+    const config: CarryConfig = {
+      ...baseConfig,
+      roiMinPct: 5,
+      roiMaxPct: 6,
+      maxSpread: 0.05,
+      allowHttpFallback: false,
+      spreadEdgeMaxRatio: 2.0,
+      spreadEdgeMinAbs: 0,
+    };
+    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now);
+    assert.strictEqual(candidates.length, 1, "one carry candidate from YES book");
+    assert.strictEqual(candidates[0].yesTokenId, "123", "candidate uses normalized YES token id");
+    assert.strictEqual(candidates[0].yesAsk, 0.95, "yesAsk must come from YES-token book");
+    const expectedRoi = (1 - 0.95) / 0.95 * 100;
+    assert.ok(Math.abs(candidates[0].carry_roi_pct - expectedRoi) < 0.01, `carry_roi_pct ≈ ${expectedRoi} (from YES ask 0.95)`);
+    assert.strictEqual(candidates[0].price_source, "ws");
+    assert.strictEqual(carryDebug.passed, 1);
+  });
 });
