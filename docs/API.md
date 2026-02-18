@@ -60,13 +60,13 @@ Invalid query (e.g. unknown param or `offset < 0`):
 
 ## GET /book and HEAD /book
 
-**GET** returns top-of-book for a given NO token id. **HEAD** accepts the same query and returns 200 with the same headers and no body.
+**GET** returns top-of-book for a given outcome token id. **HEAD** accepts the same query and returns 200 with the same headers and no body. Works for both YES and NO outcome tokens (parameter name `no_token_id` is kept for backward compatibility).
 
 ### Query parameters
 
 | Param          | Type   | Description |
 |----------------|--------|-------------|
-| `no_token_id`  | string | **Required.** NO token id (Polymarket outcome token). Trimmed; missing or blank → 400. |
+| `no_token_id`  | string | **Required.** Outcome token id (YES or NO; Polymarket CLOB asset id). Trimmed; missing or blank → 400. |
 
 - Only `no_token_id` is allowed. Any other query param → **400** with `invalid_query` and `details`.
 
@@ -109,13 +109,13 @@ Example: `curl -s "http://localhost:3344/book?no_token_id=12345"`
 
 ## GET /fill
 
-Simulated fill against the in-memory orderbook for a given NO token: buy (hit asks) or sell (hit bids) for a target `size_usd`. Returns fill summary with avg price, levels used, and slippage.
+Simulated fill against the in-memory orderbook for a given outcome token (YES or NO): buy (hit asks) or sell (hit bids) for a target `size_usd`. Returns fill summary with avg price, levels used, and slippage. Parameter name `no_token_id` accepts any outcome token id.
 
 ### Query parameters
 
 | Param          | Type   | Description |
 |----------------|--------|-------------|
-| `no_token_id`  | string | **Required.** NO token id. Trimmed; missing or blank → 400. |
+| `no_token_id`  | string | **Required.** Outcome token id (YES or NO). Trimmed; missing or blank → 400. |
 | `side`         | string | **Required.** `buy` or `sell`. |
 | `size_usd`     | number | **Required.** Target size in USD. Must be > 0; clamped to max 10,000. |
 
@@ -151,6 +151,26 @@ Partial fills still return 200 with filled_usd &lt; size_usd as applicable.
 - **404** — No book for that token: `{ "error": "book_not_found" }`.
 
 Example: `curl -s "http://localhost:3344/fill?no_token_id=12345&side=buy&size_usd=100"`
+
+---
+
+## GET /books-debug and HEAD /books-debug
+
+**GET** returns a debug snapshot of the in-memory orderbook store (size and sample keys). **HEAD** returns 200 with the same headers and no body. Useful to verify that books are loaded for carry/NO strategies (e.g. why `carry_debug.no_book_or_ask` is high).
+
+- No query params allowed. Any query param → **400** with `invalid_query` and `details`.
+
+### Response (200)
+
+```json
+{
+  "size": 42,
+  "sampleKeys": ["12345678901", "98765432101"],
+  "note": "sampleKeys are internal normalized book keys (digits-only) used by /book and /fill"
+}
+```
+
+Example: `curl -s "http://localhost:3344/books-debug"`
 
 ---
 

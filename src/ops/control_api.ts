@@ -12,7 +12,7 @@ import { getPlans as getQueuedPlans, queueLength, clearQueue } from "./plan_queu
 import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
-import { getTopOfBook, getDepth, normalizeBookKey } from "../markets/orderbook_ws";
+import { getTopOfBook, getDepth, getBooksDebug, normalizeBookKey } from "../markets/orderbook_ws";
 import type { OrderLevel } from "../types";
 
 const DEFAULT_PLANS_LIMIT = 50;
@@ -326,6 +326,29 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
           slippage_pct: sim.slippage_pct,
         };
         sendJson(res, 200, payload);
+        return;
+      }
+
+      if ((method === "GET" || method === "HEAD") && path === "/books-debug") {
+        const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+        const paramKeys = [...params.keys()];
+        if (paramKeys.length > 0) {
+          const details = paramKeys.map((k) => `unknown query param: ${k}`);
+          sendJson(res, 400, { error: "invalid_query", details });
+          return;
+        }
+        const debug = getBooksDebug();
+        res.setHeader("X-Build-Id", getBuildId());
+        if (method === "HEAD") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end();
+          return;
+        }
+        sendJson(res, 200, {
+          size: debug.size,
+          sampleKeys: debug.sampleKeys,
+          note: "sampleKeys are internal normalized book keys (digits-only) used by /book and /fill",
+        });
         return;
       }
 

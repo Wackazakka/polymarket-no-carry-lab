@@ -430,3 +430,31 @@ describe("control API GET /fill", () => {
     }
   });
 });
+
+describe("control API GET /books-debug", () => {
+  it("GET /books-debug returns 200 with size and sampleKeys", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/books-debug`);
+      assert.strictEqual(res.statusCode, 200);
+      const body = JSON.parse(res.body) as { size?: number; sampleKeys?: string[]; note?: string };
+      assert.strictEqual(typeof body.size, "number");
+      assert.ok(Array.isArray(body.sampleKeys));
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /books-debug with unknown query param returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/books-debug?foo=1`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string; details?: string[] };
+      assert.strictEqual(body.error, "invalid_query");
+      assert.ok(Array.isArray(body.details) && body.details.some((d) => d.includes("foo")));
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
