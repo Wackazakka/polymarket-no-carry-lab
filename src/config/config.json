@@ -63,7 +63,7 @@
     "roiMinPct": 0,
     "roiMaxPct": 200,
     "maxSpread": 0.20,
-    "allowSyntheticAsk": true,
+    "allowSyntheticAsk": false,
     "syntheticTick": 0.01,
     "syntheticMaxAsk": 0.995,
     "spreadEdgeMaxRatio": 1.0,
