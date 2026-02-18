@@ -220,4 +220,89 @@ describe("control API GET /plans", () => {
       await closeServer(server);
     }
   });
+
+  it("GET /plans returns updated_at per plan; setPlans twice keeps created_at stable, updated_at changes", async () => {
+    const planId = "stable-ts-1";
+    const onePlan = {
+      plan_id: planId,
+      market_id: "m1",
+      no_token_id: "123",
+      outcome: "NO" as const,
+      category: "C",
+      assumption_key: "ak1",
+      window_key: "w1",
+      ev_breakdown: { net_ev: 10 },
+      status: "proposed" as const,
+    };
+    const { server, port } = await startServer([onePlan]);
+    try {
+      const res1 = await httpGet(`http://127.0.0.1:${port}/plans?limit=1`);
+      assert.strictEqual(res1.statusCode, 200);
+      const body1 = JSON.parse(res1.body) as { plans: Array<{ plan_id: string; created_at?: string; updated_at?: string }> };
+      assert.strictEqual(body1.plans.length, 1);
+      assert.ok(body1.plans[0].created_at, "created_at present");
+      assert.ok(body1.plans[0].updated_at, "updated_at present");
+      const createdFirst = body1.plans[0].created_at;
+      const updatedFirst = body1.plans[0].updated_at;
+
+      setPlans([onePlan], new Date().toISOString(), {});
+      const res2 = await httpGet(`http://127.0.0.1:${port}/plans?limit=1`);
+      assert.strictEqual(res2.statusCode, 200);
+      const body2 = JSON.parse(res2.body) as { plans: Array<{ plan_id: string; created_at?: string; updated_at?: string }> };
+      assert.strictEqual(body2.plans.length, 1);
+      assert.strictEqual(body2.plans[0].created_at, createdFirst, "created_at unchanged across setPlans");
+      assert.ok(body2.plans[0].updated_at, "updated_at exists");
+      assert.notStrictEqual(body2.plans[0].updated_at, updatedFirst, "updated_at differs after second setPlans");
+      assert.ok(
+        Object.keys(body2.plans[0]).includes("updated_at"),
+        "response plan includes updated_at key"
+      );
+    } finally {
+      await closeServer(server);
+    }
+  });
+});
+
+describe("control API GET /book", () => {
+  it("GET /book without no_token_id returns 400", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/book`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string };
+      assert.strictEqual(body.error, "no_token_id required");
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /book?unknown=1 returns 400 invalid_query", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/book?unknown=1`);
+      assert.strictEqual(res.statusCode, 400);
+      const body = JSON.parse(res.body) as { error: string; details?: string[] };
+      assert.strictEqual(body.error, "invalid_query");
+      assert.ok(Array.isArray(body.details) && body.details.some((d) => d.includes("unknown")));
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("GET /book?no_token_id=abc returns 404 or 200; if 404 assert error shape", async () => {
+    const { server, port } = await startServer();
+    try {
+      const res = await httpGet(`http://127.0.0.1:${port}/book?no_token_id=abc`);
+      assert.ok(res.statusCode === 404 || res.statusCode === 200, "404 (no book) or 200 (book exists)");
+      const body = JSON.parse(res.body) as { error?: string; no_token_id?: string; noBid?: number; noAsk?: number; spread?: number; depthSummary?: unknown };
+      if (res.statusCode === 404) {
+        assert.strictEqual(body.error, "book_not_found");
+      } else {
+        assert.ok(typeof body.no_token_id === "string");
+        assert.ok("noBid" in body && "noAsk" in body && "spread" in body && "depthSummary" in body);
+      }
+    } finally {
+      await closeServer(server);
+    }
+  });
 });

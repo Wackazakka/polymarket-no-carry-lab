@@ -12,6 +12,7 @@ import { getPlans as getQueuedPlans, queueLength, clearQueue } from "./plan_queu
 import { getPlans as getLastScanPlans } from "../control/plan_store";
 import { setMode } from "./mode_manager";
 import { panicStop } from "./mode_manager";
+import { getTopOfBook, normalizeBookKey } from "../markets/orderbook_ws";
 
 const DEFAULT_PLANS_LIMIT = 50;
 const MAX_PLANS_LIMIT = 200;
@@ -199,9 +200,48 @@ export function createControlApi(port: number, handlers: ControlApiHandlers) {
           res.end();
           return;
         }
+        // Return stored records as-is so updated_at (and created_at) flow through from plan_store.
         const payload = { count_total, count_returned, limit: q.limit, offset: q.offset, plans: out };
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify(payload));
+        return;
+      }
+
+      if ((method === "GET" || method === "HEAD") && path === "/book") {
+        const params = url.includes("?") ? new URLSearchParams(url.split("?")[1]) : new URLSearchParams();
+        const allowedBookParams = ["no_token_id"] as const;
+        for (const key of params.keys()) {
+          if (!allowedBookParams.includes(key as (typeof allowedBookParams)[number])) {
+            sendJson(res, 400, { error: "invalid_query", details: [`unknown query param: ${key}`] });
+            return;
+          }
+        }
+        const noTokenIdRaw = params.get("no_token_id");
+        const noTokenId = noTokenIdRaw != null ? String(noTokenIdRaw).trim() : "";
+        if (!noTokenId) {
+          sendJson(res, 400, { error: "no_token_id required" });
+          return;
+        }
+        const book = getTopOfBook(noTokenId, 5);
+        if (book == null) {
+          sendJson(res, 404, { error: "book_not_found" });
+          return;
+        }
+        const key = normalizeBookKey(noTokenId) || noTokenId;
+        res.setHeader("X-Build-Id", getBuildId());
+        if (method === "HEAD") {
+          res.writeHead(200, { "Content-Type": "application/json" });
+          res.end();
+          return;
+        }
+        const payload = {
+          no_token_id: key,
+          noBid: book.noBid,
+          noAsk: book.noAsk,
+          spread: book.spread,
+          depthSummary: book.depthSummary,
+        };
+        sendJson(res, 200, payload);
         return;
       }
 
