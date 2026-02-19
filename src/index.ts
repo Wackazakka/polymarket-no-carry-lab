@@ -488,7 +488,7 @@ function main(): void {
     const carryCfgForMeta = effectiveCarryCfg(config);
     let carryMeta: Record<string, unknown> = { carry_cfg: carryCfgForMeta };
     if (carryConfig.enabled) {
-      const { candidates: carryCandidates, carryDebug, carrySamples, carry_roi_stats_pre_band, sampleNoBookTokenIds } = await selectCarryCandidates(
+      const { candidates: carryCandidates, carryDebug, carrySamples, carry_roi_stats_pre_band, carry_roi_raw_stats_pre_band, sampleNoBookTokenIds } = await selectCarryCandidates(
         markets,
         (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
         {
@@ -518,6 +518,7 @@ function main(): void {
         carry_debug: carryDebug,
         carry_samples: carrySamples,
         carry_roi_stats_pre_band: carry_roi_stats_pre_band ?? undefined,
+        carry_roi_raw_stats_pre_band: carry_roi_raw_stats_pre_band ?? undefined,
       };
       console.log(
         "[carry]",
@@ -585,6 +586,7 @@ function main(): void {
             net_ev: c.carry_roi_pct,
             mode: "carry",
             carry_roi_pct: c.carry_roi_pct,
+            carry_roi_raw_pct: c.carry_roi_raw_pct,
             hold_to_resolution: true,
             time_to_resolution_days: c.time_to_resolution_days,
             ...(c.end_time_iso != null && { end_time_iso: c.end_time_iso }),

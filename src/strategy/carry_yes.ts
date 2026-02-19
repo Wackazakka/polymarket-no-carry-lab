@@ -108,10 +108,16 @@ export function isProceduralCandidate(
   return false;
 }
 
-/** Carry ROI from YES ask: (1 - ask) / ask * 100. */
+/** Raw carry ROI from YES ask: (1 - ask) / ask * 100 (not annualized). */
 export function carryRoiPct(yesAsk: number): number {
   if (yesAsk <= 0 || yesAsk >= 1) return 0;
   return ((1 - yesAsk) / yesAsk) * 100;
+}
+
+/** Annualized ROI (APR): raw_roi_pct * (365 / t_days). Returns 0 if t_days <= 0. */
+export function carryRoiAprPct(rawRoiPct: number, tDays: number): number {
+  if (tDays <= 0 || !Number.isFinite(tDays)) return 0;
+  return rawRoiPct * (365 / tDays);
 }
 
 /** Stable assumption key for carry (event-family hash). */
@@ -139,7 +145,10 @@ export interface CarryCandidate {
   market: NormalizedMarket;
   yesTokenId: string;
   yesAsk: number;
+  /** Annualized ROI (APR) used for band gate and display. */
   carry_roi_pct: number;
+  /** Raw ROI (not annualized) for debugging. */
+  carry_roi_raw_pct: number;
   spread: number;
   askLiquidityUsd: number;
   time_to_resolution_days: number;
@@ -219,6 +228,7 @@ export interface CarryNearMissSample {
   yes_ask: number;
   spread: number;
   carry_roi_pct: number;
+  carry_roi_raw_pct?: number;
   price_source: CarryPriceSource;
   spread_edge_ratio: number | null;
 }
@@ -250,8 +260,10 @@ export interface SelectCarryResult {
   carryDebug: CarryDebugCounters;
   /** Near-miss samples (spread/ROI/too_soon) for debugging passed=0. */
   carrySamples: CarryDebugSamples;
-  /** ROI distribution before ROI band filter (for tuning). */
+  /** APR distribution before ROI band filter (for tuning). */
   carry_roi_stats_pre_band: CarryRoiStatsPreBand | null;
+  /** Raw ROI distribution before band (debug). */
+  carry_roi_raw_stats_pre_band: CarryRoiStatsPreBand | null;
   /** First few yesTokenIds that hit no_book_or_ask (for carry probe logging). */
   sampleNoBookTokenIds: string[];
 }
@@ -295,12 +307,20 @@ export async function selectCarryCandidates(
     samples_roi_out_of_band: [],
     samples_too_soon_to_resolve: [],
   };
-  const roi_pre_band: number[] = [];
+  const roi_apr_pre_band: number[] = [];
+  const roi_raw_pre_band: number[] = [];
   const MAX_NEAR_MISS_SAMPLE = 5;
   const MAX_TOO_SOON_SAMPLE = 3;
 
   if (!config.enabled) {
-    return { candidates: [], carryDebug, carrySamples, carry_roi_stats_pre_band: null, sampleNoBookTokenIds: [] };
+    return {
+      candidates: [],
+      carryDebug,
+      carrySamples,
+      carry_roi_stats_pre_band: null,
+      carry_roi_raw_stats_pre_band: null,
+      sampleNoBookTokenIds: [],
+    };
   }
 
   const out: CarryCandidate[] = [];
@@ -439,6 +459,7 @@ export async function selectCarryCandidates(
             const spreadObservable = top_noBid != null ? yesAsk - top_noBid : null;
             const edgeAbs = 1 - yesAsk;
             const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
+            const rawR = carryRoiPct(yesAsk);
             carrySamples.samples_spread_too_high.push({
               market_id: market.marketId,
               yes_token_id: yesTokenIdNorm,
@@ -447,7 +468,8 @@ export async function selectCarryCandidates(
               yes_bid: top_noBid,
               yes_ask: yesAsk,
               spread,
-              carry_roi_pct: carryRoiPct(yesAsk),
+              carry_roi_pct: carryRoiAprPct(rawR, days),
+              carry_roi_raw_pct: rawR,
               price_source,
               spread_edge_ratio: spreadObservable != null && edgeAbs > 0 ? spreadObservable / edgeAbs : null,
             });
@@ -469,6 +491,7 @@ export async function selectCarryCandidates(
           const spreadObservable = top_noBid != null ? yesAsk - top_noBid : null;
           const edgeAbs = 1 - yesAsk;
           const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
+          const rawR = carryRoiPct(yesAsk);
           carrySamples.samples_spread_too_high.push({
             market_id: market.marketId,
             yes_token_id: yesTokenIdNorm,
@@ -477,7 +500,8 @@ export async function selectCarryCandidates(
             yes_bid: top_noBid,
             yes_ask: yesAsk,
             spread,
-            carry_roi_pct: carryRoiPct(yesAsk),
+            carry_roi_pct: carryRoiAprPct(rawR, days),
+            carry_roi_raw_pct: rawR,
             price_source,
             spread_edge_ratio: spreadObservable != null && edgeAbs > 0 ? spreadObservable / edgeAbs : null,
           });
@@ -502,9 +526,11 @@ export async function selectCarryCandidates(
       continue;
     }
 
-    const roi = carryRoiPct(yesAsk);
-    roi_pre_band.push(roi);
-    if (roi < roiMinPct || roi > roiMaxPct) {
+    const roi_raw_pct = carryRoiPct(yesAsk);
+    const roi_apr_pct = carryRoiAprPct(roi_raw_pct, days);
+    roi_apr_pre_band.push(roi_apr_pct);
+    roi_raw_pre_band.push(roi_raw_pct);
+    if (roi_apr_pct < roiMinPct || roi_apr_pct > roiMaxPct) {
       carryDebug.roi_out_of_band++;
       if (carrySamples.samples_roi_out_of_band.length < MAX_NEAR_MISS_SAMPLE) {
         const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
@@ -518,7 +544,8 @@ export async function selectCarryCandidates(
           yes_bid: top_noBid,
           yes_ask: yesAsk,
           spread,
-          carry_roi_pct: roi,
+          carry_roi_pct: roi_apr_pct,
+          carry_roi_raw_pct: roi_raw_pct,
           price_source,
           spread_edge_ratio,
         });
@@ -537,7 +564,8 @@ export async function selectCarryCandidates(
       market,
       yesTokenId: yesTokenIdNorm,
       yesAsk,
-      carry_roi_pct: roi,
+      carry_roi_pct: roi_apr_pct,
+      carry_roi_raw_pct: roi_raw_pct,
       spread,
       askLiquidityUsd,
       time_to_resolution_days: days,
@@ -560,12 +588,12 @@ export async function selectCarryCandidates(
     });
   }
 
-  let carry_roi_stats_pre_band: CarryRoiStatsPreBand | null = null;
-  if (roi_pre_band.length > 0) {
-    const sorted = [...roi_pre_band].sort((a, b) => a - b);
+  const computeRoiStats = (arr: number[]): CarryRoiStatsPreBand | null => {
+    if (arr.length === 0) return null;
+    const sorted = [...arr].sort((a, b) => a - b);
     const n = sorted.length;
     const ix = (p: number) => Math.min(Math.floor((p / 100) * (n - 1)), n - 1);
-    carry_roi_stats_pre_band = {
+    return {
       count: n,
       min: sorted[0]!,
       p10: sorted[ix(10)]!,
@@ -573,6 +601,15 @@ export async function selectCarryCandidates(
       p90: sorted[ix(90)]!,
       max: sorted[n - 1]!,
     };
-  }
-  return { candidates: out, carryDebug, carrySamples, carry_roi_stats_pre_band, sampleNoBookTokenIds };
+  };
+  const carry_roi_stats_pre_band = computeRoiStats(roi_apr_pre_band);
+  const carry_roi_raw_stats_pre_band = computeRoiStats(roi_raw_pre_band);
+  return {
+    candidates: out,
+    carryDebug,
+    carrySamples,
+    carry_roi_stats_pre_band,
+    carry_roi_raw_stats_pre_band,
+    sampleNoBookTokenIds,
+  };
 }

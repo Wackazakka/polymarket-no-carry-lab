@@ -8,6 +8,7 @@ import {
   timeToResolutionDays,
   isProceduralCandidate,
   carryRoiPct,
+  carryRoiAprPct,
   firstTokenId,
   selectCarryCandidates,
   type CarryConfig,
@@ -126,6 +127,22 @@ describe("carry_yes carryRoiPct", () => {
   });
 });
 
+describe("carry_yes carryRoiAprPct", () => {
+  it("annualizes raw ROI: yesAsk=0.99, t_days=30 → raw ≈ 1.01%, APR ≈ 12.3%", () => {
+    const raw = carryRoiPct(0.99);
+    assert.ok(Math.abs(raw - 1.0101) < 0.01, `raw ≈ 1.01% got ${raw}`);
+    const apr = carryRoiAprPct(raw, 30);
+    assert.ok(apr >= 12.2 && apr <= 12.4, `APR ≈ 12.3% got ${apr}`);
+  });
+
+  it("yesAsk=0.995, t_days=30 → raw ≈ 0.50%, APR ≈ 6.11% (passes 6–7% band)", () => {
+    const raw = carryRoiPct(0.995);
+    assert.ok(Math.abs(raw - 0.5025) < 0.01, `raw ≈ 0.5025% got ${raw}`);
+    const apr = carryRoiAprPct(raw, 30);
+    assert.ok(apr >= 6.0 && apr <= 6.2, `APR ≈ 6.11% got ${apr}`);
+  });
+});
+
 function topOfBookPartial(overrides: { noBid?: number | null; noAsk?: number | null; spread?: number; askLiquidityUsd?: number }): TopOfBook {
   const defaultAsk = 0.5;
   const noAskVal = overrides.noAsk !== undefined ? overrides.noAsk : defaultAsk;
@@ -164,66 +181,74 @@ describe("carry_yes selectCarryCandidates", () => {
     assert.strictEqual(candidates.length, 0);
   });
 
-  it("selects market with YES ask in ROI band and within maxDays (normalized token id)", async () => {
+  it("selects market with YES ask in ROI band (APR 6–7%) and within maxDays (normalized token id)", async () => {
     const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const m = market({
       yesTokenId: "yes789",
       question: "Election winner?",
       category: "Politics",
-      endDateIso: "2025-03-15T12:00:00Z",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
     });
-    const getBook = (tid: string | null) => (tid === "789" ? topOfBook(0.94, 0.01, 1000) : null);
+    const getBook = (tid: string | null) => (tid === "789" ? topOfBook(0.995, 0.01, 1000) : null);
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, now);
     assert.strictEqual(candidates.length, 1);
     assert.strictEqual(candidates[0].yesTokenId, "789");
-    assert.strictEqual(candidates[0].yesAsk, 0.94);
+    assert.strictEqual(candidates[0].yesAsk, 0.995);
     assert.strictEqual(candidates[0].price_source, "ws");
-    assert.ok(candidates[0].yesBid != null && Math.abs(candidates[0].yesBid! - 0.93) < 1e-9);
+    assert.ok(candidates[0].yesBid != null && Math.abs(candidates[0].yesBid! - 0.985) < 1e-9);
     assert.ok(candidates[0].spreadObservable != null && Math.abs(candidates[0].spreadObservable! - 0.01) < 1e-9);
-    assert.ok(candidates[0].carry_roi_pct >= 6 && candidates[0].carry_roi_pct <= 7);
-    assert.ok(candidates[0].time_to_resolution_days <= 30);
+    assert.ok(candidates[0].carry_roi_pct >= 6 && candidates[0].carry_roi_pct <= 7, `APR in band got ${candidates[0].carry_roi_pct}`);
+    assert.ok(Math.abs((candidates[0].carry_roi_raw_pct ?? 0) - 0.5025) < 0.1, `raw ≈ 0.5% got ${candidates[0].carry_roi_raw_pct}`);
+    assert.ok(candidates[0].time_to_resolution_days >= 29 && candidates[0].time_to_resolution_days <= 31);
     assert.strictEqual(carryDebug.passed, 1);
   });
 
   it("selects market when yesTokenId is JSON-array string and book exists for normalized id", async () => {
     const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const m = market({
       yesTokenId: '["123"]',
       question: "Election winner?",
       category: "Politics",
-      endDateIso: "2025-03-15T12:00:00Z",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
     });
-    const getBook = (tid: string | null) => (tid === "123" ? topOfBook(0.94, 0.01, 1000) : null);
+    const getBook = (tid: string | null) => (tid === "123" ? topOfBook(0.995, 0.01, 1000) : null);
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, now);
     assert.strictEqual(candidates.length, 1);
     assert.strictEqual(candidates[0].yesTokenId, "123");
-    assert.strictEqual(candidates[0].yesAsk, 0.94);
+    assert.strictEqual(candidates[0].yesAsk, 0.995);
     assert.strictEqual(candidates[0].price_source, "ws");
     assert.ok(candidates[0].spreadObservable != null);
+    assert.ok(candidates[0].carry_roi_pct >= 6 && candidates[0].carry_roi_pct <= 7);
     assert.strictEqual(carryDebug.passed, 1);
   });
 
   it("when WS has no book but allowHttpFallback and mock HTTP returns ask, candidate passes and http_used increments", async () => {
     const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const m = market({
       yesTokenId: "456",
       question: "Election winner?",
       category: "Politics",
-      endDateIso: "2025-03-15T12:00:00Z",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
     });
     const getBook = () => null;
     const fetchHttp = async (tokenId: string) =>
       tokenId === "456"
-        ? { noBid: 0.93, noAsk: 0.94, spread: 0.01 }
+        ? { noBid: 0.985, noAsk: 0.995, spread: 0.01 }
         : null;
     const config = { ...baseConfig, allowHttpFallback: true };
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now, fetchHttp);
     assert.strictEqual(candidates.length, 1);
     assert.strictEqual(candidates[0].yesTokenId, "456");
-    assert.strictEqual(candidates[0].yesAsk, 0.94);
+    assert.strictEqual(candidates[0].yesAsk, 0.995);
     assert.strictEqual(candidates[0].price_source, "http");
     assert.strictEqual(candidates[0].http_fallback_used, true);
-    assert.ok(candidates[0].yesBid != null && Math.abs(candidates[0].yesBid! - 0.93) < 1e-9);
+    assert.ok(candidates[0].yesBid != null && Math.abs(candidates[0].yesBid! - 0.985) < 1e-9);
     assert.ok(candidates[0].spreadObservable != null && Math.abs(candidates[0].spreadObservable! - 0.01) < 1e-9);
     assert.strictEqual(carryDebug.passed, 1);
     assert.strictEqual(carryDebug.http_used, 1);
@@ -283,7 +308,7 @@ describe("carry_yes selectCarryCandidates", () => {
       endDateIso: "2025-03-15T12:00:00Z",
     });
     const getBook = (tid: string | null) => (tid === "93" ? topOfBookPartial({ noBid: 0.93, noAsk: null }) : null);
-    const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995 };
+    const config = { ...baseConfig, allowSyntheticAsk: true, syntheticTick: 0.01, syntheticMaxAsk: 0.995, roiMinPct: 0.1, roiMaxPct: 100 };
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1);
     assert.strictEqual(candidates[0].synthetic_ask, true);
@@ -351,8 +376,9 @@ describe("carry_yes selectCarryCandidates", () => {
       endDateIso: endDate.toISOString(),
       resolutionTime: endDate,
     });
-    const getBook = (tid: string | null) => (tid === "5" ? topOfBook(0.94, 0.01, 1000) : null);
-    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, baseConfig, now);
+    const getBook = (tid: string | null) => (tid === "5" ? topOfBook(0.99, 0.01, 1000) : null);
+    const config = { ...baseConfig, roiMinPct: 0.1, roiMaxPct: 100 };
+    const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1);
     assert.ok(candidates[0].time_to_resolution_days >= 4.9 && candidates[0].time_to_resolution_days <= 5.1);
     assert.ok(candidates[0].end_time_iso != null);
@@ -423,26 +449,27 @@ describe("carry_yes selectCarryCandidates", () => {
     assert.strictEqual(carryDebug.edge_too_small, 1);
   });
 
-  it("carry ROI is computed from YES-token ask not NO-token (both tokens present, mock both books)", async () => {
+  it("carry ROI is computed from YES-token ask not NO-token (APR in band, both tokens present)", async () => {
     const now = new Date("2025-02-17T12:00:00Z");
+    const endDate = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
     const m = market({
       yesTokenId: "yes123",
       noTokenId: "no456",
       question: "Election?",
       category: "Politics",
-      endDateIso: "2025-03-15T12:00:00Z",
+      endDateIso: endDate.toISOString(),
+      resolutionTime: endDate,
     });
-    // YES token normalizes to "123": best ask 0.95, bid 0.93 => carry ROI (1-0.95)/0.95*100 ≈ 5.263%
-    // NO token normalizes to "456": best ask 0.51, bid 0.49 (must not be used for carry)
+    // YES token "123": ask 0.995 => raw ≈ 0.5025%, APR ≈ 6.11% (in 6–7% band). NO token "456" must not be used.
     const getBook = (tid: string | null) => {
-      if (tid === "123") return topOfBook(0.95, 0.02, 1000);
+      if (tid === "123") return topOfBook(0.995, 0.01, 1000);
       if (tid === "456") return topOfBook(0.51, 0.02, 1000);
       return null;
     };
     const config: CarryConfig = {
       ...baseConfig,
-      roiMinPct: 5,
-      roiMaxPct: 6,
+      roiMinPct: 6,
+      roiMaxPct: 7,
       maxSpread: 0.05,
       allowHttpFallback: false,
       spreadEdgeMaxRatio: 2.0,
@@ -451,9 +478,10 @@ describe("carry_yes selectCarryCandidates", () => {
     const { candidates, carryDebug } = await selectCarryCandidates([m], getBook, config, now);
     assert.strictEqual(candidates.length, 1, "one carry candidate from YES book");
     assert.strictEqual(candidates[0].yesTokenId, "123", "candidate uses normalized YES token id");
-    assert.strictEqual(candidates[0].yesAsk, 0.95, "yesAsk must come from YES-token book");
-    const expectedRoi = (1 - 0.95) / 0.95 * 100;
-    assert.ok(Math.abs(candidates[0].carry_roi_pct - expectedRoi) < 0.01, `carry_roi_pct ≈ ${expectedRoi} (from YES ask 0.95)`);
+    assert.strictEqual(candidates[0].yesAsk, 0.995, "yesAsk must come from YES-token book");
+    const expectedRaw = (1 - 0.995) / 0.995 * 100;
+    assert.ok(Math.abs((candidates[0].carry_roi_raw_pct ?? 0) - expectedRaw) < 0.01, `carry_roi_raw_pct ≈ ${expectedRaw}`);
+    assert.ok(candidates[0].carry_roi_pct >= 6 && candidates[0].carry_roi_pct <= 7, `APR in band got ${candidates[0].carry_roi_pct}`);
     assert.strictEqual(candidates[0].price_source, "ws");
     assert.strictEqual(carryDebug.passed, 1);
   });
