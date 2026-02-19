@@ -57,6 +57,14 @@
     "path": "./data/polymarket_lab.db"
   },
   "diagnostic_loose_filters": true,
+  "micro_capture_v1": {
+    "enabled": true,
+    "minSpread": 0.04,
+    "minDriftPct": 1.5,
+    "take_profit_pct": 3,
+    "stop_loss_pct": 2,
+    "max_hold_minutes": 180
+  },
   "carry": {
     "enabled": true,
     "roiRawMinPct": 8,

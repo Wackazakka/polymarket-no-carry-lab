@@ -72,6 +72,17 @@ const ConfigSchema = z.object({
     .optional()
     .default({ port: 3344 }),
   diagnostic_loose_filters: z.boolean().optional().default(false),
+  micro_capture_v1: z
+    .object({
+      enabled: z.boolean().optional().default(false),
+      minSpread: z.number().min(0).max(1).optional().default(0.04),
+      minDriftPct: z.number().min(0).optional().default(1.5),
+      take_profit_pct: z.number().min(0).optional().default(3),
+      stop_loss_pct: z.number().min(0).optional().default(2),
+      max_hold_minutes: z.number().int().min(1).optional().default(180),
+    })
+    .optional()
+    .default({ enabled: false, minSpread: 0.04, minDriftPct: 1.5, take_profit_pct: 3, stop_loss_pct: 2, max_hold_minutes: 180 }),
   carry: z
     .object({
       enabled: z.boolean().optional().default(true),
