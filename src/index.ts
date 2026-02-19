@@ -81,12 +81,14 @@ function shouldRunDailyReport(config: { reporting: { daily_report_hour_local: nu
 }
 
 /** Effective carry config (defaults applied) for logging and /status. */
-function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: number; roiMaxPct?: number; maxSpread?: number; maxDays?: number; minDaysToResolution?: number; spreadEdgeMaxRatio?: number; spreadEdgeMinAbs?: number; allowSyntheticAsk?: boolean; allowHttpFallback?: boolean } | null }): Record<string, unknown> {
+function effectiveCarryCfg(config: { carry?: { enabled?: boolean; roiMinPct?: number; roiMaxPct?: number; roiRawMinPct?: number; roiRawMaxPct?: number; maxSpread?: number; maxDays?: number; minDaysToResolution?: number; spreadEdgeMaxRatio?: number; spreadEdgeMinAbs?: number; allowSyntheticAsk?: boolean; allowHttpFallback?: boolean } | null }): Record<string, unknown> {
   const c = config.carry ?? { enabled: false };
+  const useRaw = c.roiRawMinPct != null && c.roiRawMaxPct != null;
   return {
     enabled: c.enabled ?? true,
-    roiMinPct: c.roiMinPct ?? 6,
-    roiMaxPct: c.roiMaxPct ?? 7,
+    useRawRoi: useRaw,
+    roiMinPct: useRaw ? (c.roiRawMinPct ?? 8) : (c.roiMinPct ?? 6),
+    roiMaxPct: useRaw ? (c.roiRawMaxPct ?? 20) : (c.roiMaxPct ?? 7),
     maxSpread: c.maxSpread ?? 0.02,
     maxDays: c.maxDays ?? 30,
     minDaysToResolution: c.minDaysToResolution ?? 2,
@@ -488,6 +490,7 @@ function main(): void {
     const carryCfgForMeta = effectiveCarryCfg(config);
     let carryMeta: Record<string, unknown> = { carry_cfg: carryCfgForMeta };
     if (carryConfig.enabled) {
+      const useRawRoi = carryConfig.roiRawMinPct != null && carryConfig.roiRawMaxPct != null;
       const { candidates: carryCandidates, carryDebug, carrySamples, carry_roi_stats_pre_band, carry_roi_raw_stats_pre_band, sampleNoBookTokenIds } = await selectCarryCandidates(
         markets,
         (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
@@ -495,8 +498,9 @@ function main(): void {
           enabled: true,
           maxDays: carryConfig.maxDays ?? 30,
           minDaysToResolution: carryConfig.minDaysToResolution ?? 2,
-          roiMinPct: carryConfig.roiMinPct ?? 6,
-          roiMaxPct: carryConfig.roiMaxPct ?? 7,
+          roiMinPct: useRawRoi ? (carryConfig.roiRawMinPct ?? 8) : (carryConfig.roiMinPct ?? 6),
+          roiMaxPct: useRawRoi ? (carryConfig.roiRawMaxPct ?? 20) : (carryConfig.roiMaxPct ?? 7),
+          useRawRoi,
           maxSpread: carryConfig.maxSpread ?? 0.02,
           minAskLiqUsd: carryConfig.minAskLiqUsd ?? 500,
           sizeUsd: carryConfig.sizeUsd,

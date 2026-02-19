@@ -78,6 +78,9 @@ const ConfigSchema = z.object({
       maxDays: z.number().positive().optional().default(30),
       roiMinPct: z.number().optional().default(6),
       roiMaxPct: z.number().optional().default(7),
+      /** Raw hold-to-resolution ROI band (%). When both set, gate on raw ROI instead of APR. */
+      roiRawMinPct: z.number().min(0).optional(),
+      roiRawMaxPct: z.number().min(0).optional(),
       maxSpread: z.number().min(0).max(1).optional().default(0.02),
       minAskLiqUsd: z.number().min(0).optional().default(500),
       sizeUsd: z.number().positive().optional(),

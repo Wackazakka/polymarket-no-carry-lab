@@ -42,6 +42,8 @@ export interface CarryConfig {
   allowSyntheticAsk: boolean;
   syntheticTick: number;
   syntheticMaxAsk: number;
+  /** When true, gate on raw hold-to-resolution ROI (roiMinPct/roiMaxPct); when false, gate on APR. */
+  useRawRoi?: boolean;
   /** When true (default for paper), fetch top-of-book via CLOB HTTP if WS has no book. */
   allowHttpFallback?: boolean;
   /** Base URL for CLOB HTTP book (e.g. https://clob.polymarket.com). Used when allowHttpFallback is true. */
@@ -332,6 +334,7 @@ export async function selectCarryCandidates(
     minDaysToResolution = 2,
     roiMinPct,
     roiMaxPct,
+    useRawRoi = false,
     maxSpread,
     minAskLiqUsd,
     allowCategories,
@@ -530,7 +533,8 @@ export async function selectCarryCandidates(
     const roi_apr_pct = carryRoiAprPct(roi_raw_pct, days);
     roi_apr_pre_band.push(roi_apr_pct);
     roi_raw_pre_band.push(roi_raw_pct);
-    if (roi_apr_pct < roiMinPct || roi_apr_pct > roiMaxPct) {
+    const roi_gate_pct = useRawRoi ? roi_raw_pct : roi_apr_pct;
+    if (roi_gate_pct < roiMinPct || roi_gate_pct > roiMaxPct) {
       carryDebug.roi_out_of_band++;
       if (carrySamples.samples_roi_out_of_band.length < MAX_NEAR_MISS_SAMPLE) {
         const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
