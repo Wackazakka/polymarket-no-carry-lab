@@ -236,11 +236,22 @@ export interface CarryDebugSamples {
   samples_too_soon_to_resolve: CarryTooSoonSample[];
 }
 
+export interface CarryRoiStatsPreBand {
+  count: number;
+  min: number;
+  p10: number;
+  p50: number;
+  p90: number;
+  max: number;
+}
+
 export interface SelectCarryResult {
   candidates: CarryCandidate[];
   carryDebug: CarryDebugCounters;
   /** Near-miss samples (spread/ROI/too_soon) for debugging passed=0. */
   carrySamples: CarryDebugSamples;
+  /** ROI distribution before ROI band filter (for tuning). */
+  carry_roi_stats_pre_band: CarryRoiStatsPreBand | null;
   /** First few yesTokenIds that hit no_book_or_ask (for carry probe logging). */
   sampleNoBookTokenIds: string[];
 }
@@ -284,10 +295,13 @@ export async function selectCarryCandidates(
     samples_roi_out_of_band: [],
     samples_too_soon_to_resolve: [],
   };
+  const roi_pre_band: number[] = [];
   const MAX_NEAR_MISS_SAMPLE = 5;
   const MAX_TOO_SOON_SAMPLE = 3;
 
-  if (!config.enabled) return { candidates: [], carryDebug, carrySamples, sampleNoBookTokenIds: [] };
+  if (!config.enabled) {
+    return { candidates: [], carryDebug, carrySamples, carry_roi_stats_pre_band: null, sampleNoBookTokenIds: [] };
+  }
 
   const out: CarryCandidate[] = [];
   const sampleNoBookTokenIds: string[] = [];
@@ -489,6 +503,7 @@ export async function selectCarryCandidates(
     }
 
     const roi = carryRoiPct(yesAsk);
+    roi_pre_band.push(roi);
     if (roi < roiMinPct || roi > roiMaxPct) {
       carryDebug.roi_out_of_band++;
       if (carrySamples.samples_roi_out_of_band.length < MAX_NEAR_MISS_SAMPLE) {
@@ -545,5 +560,19 @@ export async function selectCarryCandidates(
     });
   }
 
-  return { candidates: out, carryDebug, carrySamples, sampleNoBookTokenIds };
+  let carry_roi_stats_pre_band: CarryRoiStatsPreBand | null = null;
+  if (roi_pre_band.length > 0) {
+    const sorted = [...roi_pre_band].sort((a, b) => a - b);
+    const n = sorted.length;
+    const ix = (p: number) => Math.min(Math.floor((p / 100) * (n - 1)), n - 1);
+    carry_roi_stats_pre_band = {
+      count: n,
+      min: sorted[0]!,
+      p10: sorted[ix(10)]!,
+      p50: sorted[ix(50)]!,
+      p90: sorted[ix(90)]!,
+      max: sorted[n - 1]!,
+    };
+  }
+  return { candidates: out, carryDebug, carrySamples, carry_roi_stats_pre_band, sampleNoBookTokenIds };
 }
