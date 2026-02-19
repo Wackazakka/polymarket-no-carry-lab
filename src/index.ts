@@ -37,7 +37,7 @@ import {
   type AllowTradeResult,
 } from "./risk/risk_engine";
 import { selectCarryCandidates } from "./strategy/carry_yes";
-import { evaluateMicroCaptureV1, PRESET_NAME } from "./strategy/micro_capture_v1";
+import { evaluateMicroCaptureV1, PRESET_NAME, type MicroCaptureV1Result } from "./strategy/micro_capture_v1";
 import { initStore } from "./state/store";
 import { initPositionsDb, listPositions, insertPosition } from "./state/positions";
 import { initLedgerDb, appendLedger } from "./state/ledger";
@@ -327,31 +327,36 @@ function main(): void {
       }
     }
 
-    /** micro_capture_v1 preset: paper-only suggestions, no end_time/resolution/carry, log entry + proposed exit + rationale. */
+    /** micro_capture_v1 preset: paper-only suggestions, no end_time/resolution/carry. Collect passing for plan_store. */
     const microCfg = config.micro_capture_v1;
+    const microPassing: Array<{
+      market: NormalizedMarket;
+      book: NonNullable<ReturnType<typeof getTopOfBook>>;
+      result: MicroCaptureV1Result;
+    }> = [];
     if (microCfg?.enabled) {
       const preset = {
         outcome: "NO" as const,
         ev_mode: "capture" as const,
         minSpread: microCfg.minSpread ?? 0.04,
-        minDriftPct: microCfg.minDriftPct ?? 1.5,
+        minAskMidPremiumPct: microCfg.minAskMidPremiumPct ?? 1.5,
+        minAskBidImbalanceRatio: microCfg.minAskBidImbalanceRatio,
         take_profit_pct: microCfg.take_profit_pct ?? 3,
         stop_loss_pct: microCfg.stop_loss_pct ?? 2,
         max_hold_minutes: microCfg.max_hold_minutes ?? 180,
       };
-      let microSuggestions = 0;
       for (const market of withNoToken) {
         if (!market.noTokenId) continue;
         const book = getTopOfBook(market.noTokenId, config.simulation.max_fill_depth_levels);
         const result = evaluateMicroCaptureV1(market, book, preset);
-        if (result.pass && result.entry != null) {
-          microSuggestions++;
+        if (result.pass && result.entry != null && book != null) {
+          microPassing.push({ market, book, result });
           console.log(
             `[${PRESET_NAME}] marketId=${market.marketId} entry=${result.entry.toFixed(4)} take_profit_price=${result.takeProfitPrice!.toFixed(4)} stop_loss_price=${result.stopLossPrice!.toFixed(4)} max_hold_min=${result.maxHoldMinutes} | ${result.rationale.join("; ")}`
           );
         }
       }
-      console.log(`[${PRESET_NAME}] suggestions=${microSuggestions} (paper only, no execution)`);
+      console.log(`[${PRESET_NAME}] suggestions=${microPassing.length} (paper only, persisted as plans)`);
     }
 
     const positions = listPositions(dataDir, true);
@@ -642,6 +647,42 @@ function main(): void {
         };
         plansForApi.push(carryPlanPayload);
       }
+    }
+
+    /** micro_capture_v1: persist passing suggestions as paper plans (plan_id = market_id + outcome + mode). */
+    const microHeadroom = { global: 0, category: 0, assumption: 0, window: 0, per_market: 0 };
+    for (const { market, result } of microPassing) {
+      const planId = planIdFromMode(market.marketId, "NO", PRESET_NAME);
+      const category = inferCategory(market);
+      const microPlan = {
+        plan_id: planId,
+        market_id: market.marketId,
+        condition_id: market.conditionId,
+        no_token_id: normalizeTokenId(market.noTokenId!),
+        outcome: "NO" as const,
+        sizeUsd: config.simulation.default_order_size_usd,
+        limit_price: result.entry!,
+        category,
+        assumption_key: "micro_capture_v1",
+        window_key: "W_micro",
+        ev_breakdown: {
+          net_ev: 0,
+          mode: PRESET_NAME,
+          entry: result.entry,
+          take_profit_price: result.takeProfitPrice,
+          stop_loss_price: result.stopLossPrice,
+          max_hold_minutes: result.maxHoldMinutes,
+          spread: result.spread ?? undefined,
+          no_bid: result.no_bid ?? undefined,
+          no_ask: result.no_ask,
+          mid: result.mid,
+          ask_premium_pct: result.ask_premium_pct,
+          rationale: result.rationale,
+        },
+        headroom: microHeadroom,
+        status: "proposed" as const,
+      };
+      plansForApi.push(microPlan);
     }
 
     if (plansForApi.length > 0 && /[^0-9]/.test(plansForApi[0].no_token_id)) {

@@ -35,7 +35,7 @@ describe("micro_capture_v1", () => {
     assert.strictEqual(PRESET_NAME, "micro_capture_v1");
   });
 
-  it("passes when spread >= minSpread and edge >= minDriftPct", () => {
+  it("passes when spread >= minSpread and ask_premium_pct >= minAskMidPremiumPct", () => {
     const m = market({ noTokenId: "n1" });
     const book: TopOfBook = {
       noBid: 0.46,
@@ -46,6 +46,8 @@ describe("micro_capture_v1", () => {
     const result = evaluateMicroCaptureV1(m, book, DEFAULT_MICRO_CAPTURE_V1);
     assert.strictEqual(result.pass, true);
     assert.strictEqual(result.entry, 0.5);
+    assert.strictEqual(result.mid, 0.48);
+    assert.ok(result.ask_premium_pct != null && result.ask_premium_pct >= 1.5);
     assert.ok(result.takeProfitPrice != null);
     assert.ok(result.stopLossPrice != null);
     assert.strictEqual(result.maxHoldMinutes, 180);
@@ -67,7 +69,7 @@ describe("micro_capture_v1", () => {
     assert.ok(result.rationale.some((r) => r.includes("minSpread")));
   });
 
-  it("fails when edge < minDriftPct", () => {
+  it("fails when ask_premium_pct < minAskMidPremiumPct", () => {
     const m = market({ noTokenId: "n1" });
     const book: TopOfBook = {
       noBid: 0.985,
@@ -77,7 +79,21 @@ describe("micro_capture_v1", () => {
     };
     const result = evaluateMicroCaptureV1(m, book, DEFAULT_MICRO_CAPTURE_V1);
     assert.strictEqual(result.pass, false);
-    assert.ok(result.rationale.some((r) => r.includes("minDriftPct") || r.includes("edge")));
+    assert.ok(result.rationale.some((r) => r.includes("minAskMidPremiumPct") || r.includes("ask_premium_pct")));
+  });
+
+  it("fails when minAskBidImbalanceRatio set and ask/bid liquidity ratio below", () => {
+    const m = market({ noTokenId: "n1" });
+    const book: TopOfBook = {
+      noBid: 0.46,
+      noAsk: 0.50,
+      spread: 0.04,
+      depthSummary: { bidLiquidityUsd: 2000, askLiquidityUsd: 500, levels: 5 },
+    };
+    const preset = { ...DEFAULT_MICRO_CAPTURE_V1, minAskBidImbalanceRatio: 1.5 };
+    const result = evaluateMicroCaptureV1(m, book, preset);
+    assert.strictEqual(result.pass, false);
+    assert.ok(result.rationale.some((r) => r.includes("minAskBidImbalanceRatio") || r.includes("liquidity ratio")));
   });
 
   it("fails when no book or no ask", () => {

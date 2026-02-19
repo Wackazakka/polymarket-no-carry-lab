@@ -278,7 +278,7 @@ export function createControlApi(port: number, handlers: ControlApiHandlers, opt
             const outcome = (row as { outcome?: string }).outcome ?? "MISSING";
             const mode = (row as { ev_breakdown?: { mode?: string } }).ev_breakdown?.mode ?? "MISSING";
             const allowed =
-              (outcome === "NO" && (mode === "capture" || mode === "baseline")) ||
+              (outcome === "NO" && (mode === "capture" || mode === "baseline" || mode === "micro_capture_v1")) ||
               (outcome === "YES" && mode === "carry") ||
               outcome === "MISSING" ||
               mode === "MISSING";

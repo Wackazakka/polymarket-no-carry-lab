@@ -1,12 +1,14 @@
 /**
  * micro_capture_v1 preset: NO outcome, capture-style, short hold.
  * Paper-only trade suggestions. No end_time/resolution, no carry.
- * Logs entry, proposed exit (TP/SL), and rationale.
+ * Gates on ask premium vs mid; optional ask/bid size imbalance.
  */
 
 import type { NormalizedMarket, TopOfBook } from "../types";
 
 export const PRESET_NAME = "micro_capture_v1" as const;
+
+const EPS = 1e-9;
 
 export interface MicroCaptureV1Preset {
   /** outcome */
@@ -15,8 +17,10 @@ export interface MicroCaptureV1Preset {
   ev_mode: "capture";
   /** Minimum spread (e.g. 0.04) to consider. */
   minSpread: number;
-  /** Minimum drift/edge in % (e.g. 1.5). Edge = (1 - noAsk)*100. */
-  minDriftPct: number;
+  /** Minimum ask premium vs mid in %. askPremiumPct = ((noAsk - mid) / mid) * 100. */
+  minAskMidPremiumPct: number;
+  /** Optional: require (askLiquidityUsd / max(bidLiquidityUsd, eps)) >= this. Skipped if book has no sizes. */
+  minAskBidImbalanceRatio?: number;
   /** Take-profit in % (e.g. 3). Exit when NO price drops by this much. */
   take_profit_pct: number;
   /** Stop-loss in % (e.g. 2). Exit when NO price rises by this much. */
@@ -29,7 +33,7 @@ export const DEFAULT_MICRO_CAPTURE_V1: MicroCaptureV1Preset = {
   outcome: "NO",
   ev_mode: "capture",
   minSpread: 0.04,
-  minDriftPct: 1.5,
+  minAskMidPremiumPct: 1.5,
   take_profit_pct: 3,
   stop_loss_pct: 2,
   max_hold_minutes: 180,
@@ -44,12 +48,20 @@ export interface MicroCaptureV1Result {
   /** Proposed exit price when stopping loss. */
   stopLossPrice?: number;
   maxHoldMinutes?: number;
+  /** For ev_breakdown. */
+  no_bid?: number | null;
+  no_ask?: number;
+  mid?: number;
+  ask_premium_pct?: number;
+  spread?: number | null;
   rationale: string[];
 }
 
 /**
  * Evaluate one market for micro_capture_v1.
  * Does not use end_time, resolution, or carry. Entry = best_ask.
+ * Gates on askPremiumPct = ((noAsk - mid) / mid) * 100 >= minAskMidPremiumPct.
+ * Optional: (askLiquidityUsd / max(bidLiquidityUsd, eps)) >= minAskBidImbalanceRatio when preset and book provide sizes.
  */
 export function evaluateMicroCaptureV1(
   market: NormalizedMarket,
@@ -65,20 +77,39 @@ export function evaluateMicroCaptureV1(
     rationale.push("no NO token");
     return { pass: false, rationale };
   }
-  const entry = book?.noAsk ?? null;
-  if (entry == null || book == null) {
+  const noAsk = book?.noAsk ?? null;
+  const noBid = book?.noBid ?? null;
+  if (noAsk == null || book == null) {
     rationale.push("no NO ask (missing book)");
     return { pass: false, rationale };
   }
+  const entry = noAsk;
   const spread = book.spread ?? null;
   if (spread == null || spread < preset.minSpread) {
     rationale.push(`spread ${spread ?? "null"} < minSpread ${preset.minSpread}`);
     return { pass: false, rationale };
   }
-  const edgePct = (1 - entry) * 100;
-  if (edgePct < preset.minDriftPct) {
-    rationale.push(`edge ${edgePct.toFixed(2)}% < minDriftPct ${preset.minDriftPct}`);
+  const mid = noBid != null ? (noBid + noAsk) / 2 : noAsk;
+  const askPremiumPct = mid > 0 ? ((noAsk - mid) / mid) * 100 : 0;
+  if (askPremiumPct < preset.minAskMidPremiumPct) {
+    rationale.push(
+      `ask_premium_pct ${askPremiumPct.toFixed(2)}% < minAskMidPremiumPct ${preset.minAskMidPremiumPct}`
+    );
     return { pass: false, rationale };
+  }
+  if (preset.minAskBidImbalanceRatio != null && preset.minAskBidImbalanceRatio > 0) {
+    const ds = book.depthSummary;
+    const askLiq = ds?.askLiquidityUsd ?? 0;
+    const bidLiq = ds?.bidLiquidityUsd ?? 0;
+    if (typeof askLiq === "number" && typeof bidLiq === "number") {
+      const ratio = askLiq / Math.max(bidLiq, EPS);
+      if (ratio < preset.minAskBidImbalanceRatio) {
+        rationale.push(
+          `ask/bid liquidity ratio ${ratio.toFixed(2)} < minAskBidImbalanceRatio ${preset.minAskBidImbalanceRatio}`
+        );
+        return { pass: false, rationale };
+      }
+    }
   }
   const takeProfitPrice = entry * (1 - preset.take_profit_pct / 100);
   const stopLossPrice = entry * (1 + preset.stop_loss_pct / 100);
@@ -87,7 +118,7 @@ export function evaluateMicroCaptureV1(
     `take_profit=${preset.take_profit_pct}% -> exit_at=${takeProfitPrice.toFixed(4)}`,
     `stop_loss=${preset.stop_loss_pct}% -> exit_at=${stopLossPrice.toFixed(4)}`,
     `max_hold=${preset.max_hold_minutes}min`,
-    `spread=${spread.toFixed(4)}>=${preset.minSpread} edge=${edgePct.toFixed(2)}%>=${preset.minDriftPct}%`
+    `spread=${spread.toFixed(4)}>=${preset.minSpread} mid=${mid.toFixed(4)} ask_premium_pct=${askPremiumPct.toFixed(2)}%>=${preset.minAskMidPremiumPct}%`
   );
   return {
     pass: true,
@@ -95,6 +126,11 @@ export function evaluateMicroCaptureV1(
     takeProfitPrice,
     stopLossPrice,
     maxHoldMinutes: preset.max_hold_minutes,
+    no_bid: noBid,
+    no_ask: noAsk,
+    mid,
+    ask_premium_pct: askPremiumPct,
+    spread,
     rationale,
   };
 }
