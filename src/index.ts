@@ -488,7 +488,7 @@ function main(): void {
     const carryCfgForMeta = effectiveCarryCfg(config);
     let carryMeta: Record<string, unknown> = { carry_cfg: carryCfgForMeta };
     if (carryConfig.enabled) {
-      const { candidates: carryCandidates, carryDebug, sampleNoBookTokenIds } = await selectCarryCandidates(
+      const { candidates: carryCandidates, carryDebug, carrySamples, sampleNoBookTokenIds } = await selectCarryCandidates(
         markets,
         (tid) => getTopOfBook(tid, config.simulation.max_fill_depth_levels),
         {
@@ -513,7 +513,7 @@ function main(): void {
         },
         now
       );
-      carryMeta = { carry_cfg: carryCfgForMeta, carry_debug: carryDebug };
+      carryMeta = { carry_cfg: carryCfgForMeta, carry_debug: carryDebug, carry_samples: carrySamples };
       console.log(
         "[carry]",
         "passed=" + carryDebug.passed,

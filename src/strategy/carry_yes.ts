@@ -209,9 +209,38 @@ export interface CarryDebugCounters {
   http_failed: number;
 }
 
+/** Near-miss sample when rejecting for spread or ROI (max 5 per reason). */
+export interface CarryNearMissSample {
+  market_id: string;
+  yes_token_id: string;
+  t_days: number;
+  end_time_iso: string | null;
+  yes_bid: number | null;
+  yes_ask: number;
+  spread: number;
+  carry_roi_pct: number;
+  price_source: CarryPriceSource;
+  spread_edge_ratio: number | null;
+}
+
+/** Minimal sample for too_soon_to_resolve (max 3). */
+export interface CarryTooSoonSample {
+  market_id: string;
+  t_days: number;
+  end_time_iso: string | null;
+}
+
+export interface CarryDebugSamples {
+  samples_spread_too_high: CarryNearMissSample[];
+  samples_roi_out_of_band: CarryNearMissSample[];
+  samples_too_soon_to_resolve: CarryTooSoonSample[];
+}
+
 export interface SelectCarryResult {
   candidates: CarryCandidate[];
   carryDebug: CarryDebugCounters;
+  /** Near-miss samples (spread/ROI/too_soon) for debugging passed=0. */
+  carrySamples: CarryDebugSamples;
   /** First few yesTokenIds that hit no_book_or_ask (for carry probe logging). */
   sampleNoBookTokenIds: string[];
 }
@@ -250,7 +279,15 @@ export async function selectCarryCandidates(
     http_failed: 0,
   };
 
-  if (!config.enabled) return { candidates: [], carryDebug, sampleNoBookTokenIds: [] };
+  const carrySamples: CarryDebugSamples = {
+    samples_spread_too_high: [],
+    samples_roi_out_of_band: [],
+    samples_too_soon_to_resolve: [],
+  };
+  const MAX_NEAR_MISS_SAMPLE = 5;
+  const MAX_TOO_SOON_SAMPLE = 3;
+
+  if (!config.enabled) return { candidates: [], carryDebug, carrySamples, sampleNoBookTokenIds: [] };
 
   const out: CarryCandidate[] = [];
   const sampleNoBookTokenIds: string[] = [];
@@ -290,6 +327,7 @@ export async function selectCarryCandidates(
       carryDebug.missing_end_time++;
       continue;
     }
+    const end_time_iso: string | null = getMarketEndTimeIso(market) ?? null;
     const nowMs = now.getTime();
     const tDays = (endMs - nowMs) / (1000 * 60 * 60 * 24);
     if (tDays <= 0) {
@@ -298,6 +336,13 @@ export async function selectCarryCandidates(
     }
     if (tDays < minDaysToResolution) {
       carryDebug.too_soon_to_resolve++;
+      if (carrySamples.samples_too_soon_to_resolve.length < MAX_TOO_SOON_SAMPLE) {
+        carrySamples.samples_too_soon_to_resolve.push({
+          market_id: market.marketId,
+          t_days: tDays,
+          end_time_iso,
+        });
+      }
       continue;
     }
     if (tDays > maxDays) {
@@ -305,7 +350,6 @@ export async function selectCarryCandidates(
       continue;
     }
     const days = tDays;
-    const end_time_iso = getMarketEndTimeIso(market) ?? undefined;
 
     if (!isProceduralCandidate(market, allowCategories, allowKeywords)) {
       carryDebug.procedural_rejected++;
@@ -377,6 +421,23 @@ export async function selectCarryCandidates(
         spread = book.spread ?? 0;
         if (spread > maxSpread) {
           carryDebug.spread_too_high++;
+          if (carrySamples.samples_spread_too_high.length < MAX_NEAR_MISS_SAMPLE) {
+            const spreadObservable = top_noBid != null ? yesAsk - top_noBid : null;
+            const edgeAbs = 1 - yesAsk;
+            const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
+            carrySamples.samples_spread_too_high.push({
+              market_id: market.marketId,
+              yes_token_id: yesTokenIdNorm,
+              t_days: days,
+              end_time_iso: end_time_iso ?? null,
+              yes_bid: top_noBid,
+              yes_ask: yesAsk,
+              spread,
+              carry_roi_pct: carryRoiPct(yesAsk),
+              price_source,
+              spread_edge_ratio: spreadObservable != null && edgeAbs > 0 ? spreadObservable / edgeAbs : null,
+            });
+          }
           continue;
         }
         askLiquidityUsd = book.depthSummary?.askLiquidityUsd ?? 0;
@@ -390,6 +451,23 @@ export async function selectCarryCandidates(
       spread = book.spread ?? 0;
       if (spread > maxSpread) {
         carryDebug.spread_too_high++;
+        if (carrySamples.samples_spread_too_high.length < MAX_NEAR_MISS_SAMPLE) {
+          const spreadObservable = top_noBid != null ? yesAsk - top_noBid : null;
+          const edgeAbs = 1 - yesAsk;
+          const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
+          carrySamples.samples_spread_too_high.push({
+            market_id: market.marketId,
+            yes_token_id: yesTokenIdNorm,
+            t_days: days,
+            end_time_iso: end_time_iso ?? null,
+            yes_bid: top_noBid,
+            yes_ask: yesAsk,
+            spread,
+            carry_roi_pct: carryRoiPct(yesAsk),
+            price_source,
+            spread_edge_ratio: spreadObservable != null && edgeAbs > 0 ? spreadObservable / edgeAbs : null,
+          });
+        }
         continue;
       }
       askLiquidityUsd = book.depthSummary?.askLiquidityUsd ?? 0;
@@ -413,6 +491,23 @@ export async function selectCarryCandidates(
     const roi = carryRoiPct(yesAsk);
     if (roi < roiMinPct || roi > roiMaxPct) {
       carryDebug.roi_out_of_band++;
+      if (carrySamples.samples_roi_out_of_band.length < MAX_NEAR_MISS_SAMPLE) {
+        const price_source: CarryPriceSource = synthetic_ask ? "synthetic_ask" : httpFallbackUsed ? "http" : "ws";
+        const spread_edge_ratio: number | null =
+          spreadObservable != null && edgeAbs > 0 ? spreadObservable / edgeAbs : null;
+        carrySamples.samples_roi_out_of_band.push({
+          market_id: market.marketId,
+          yes_token_id: yesTokenIdNorm,
+          t_days: days,
+          end_time_iso: end_time_iso ?? null,
+          yes_bid: top_noBid,
+          yes_ask: yesAsk,
+          spread,
+          carry_roi_pct: roi,
+          price_source,
+          spread_edge_ratio,
+        });
+      }
       continue;
     }
 
@@ -450,5 +545,5 @@ export async function selectCarryCandidates(
     });
   }
 
-  return { candidates: out, carryDebug, sampleNoBookTokenIds };
+  return { candidates: out, carryDebug, carrySamples, sampleNoBookTokenIds };
 }
